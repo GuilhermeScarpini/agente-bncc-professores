@@ -1,0 +1,55 @@
+@import "tailwindcss";
+
+/* Tokens de cor no estilo shadcn/ui: os componentes usam nomes semânticos
+   (bg-card, text-muted-foreground, bg-primary...) em vez de cores fixas. */
+@theme {
+  --font-sans:
+    ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial, "Noto Sans",
+    sans-serif, "Apple Color Emoji", "Segoe UI Emoji", "Noto Color Emoji";
+
+  --color-background: #f0f2f5;
+  --color-foreground: #1c1e21;
+  --color-card: #ffffff;
+  --color-muted: #f0f2f5;
+  --color-muted-foreground: #65676b;
+  --color-accent: #f2f3f5;
+  --color-border: #e4e6eb;
+  --color-input: #ccd0d5;
+  --color-ring: #2563eb;
+
+  --color-primary: #2563eb;
+  --color-primary-foreground: #ffffff;
+  --color-primary-soft: #e8f0fe;
+  --color-secondary: #e4e6eb;
+  --color-secondary-foreground: #1c1e21;
+
+  --color-destructive: #dc2626;
+  --color-destructive-soft: #fdeded;
+  --color-success: #15803d;
+  --color-success-soft: #e9f7ee;
+  --color-warning: #b45309;
+  --color-warning-soft: #fff6e5;
+  --color-like: #e11d48;
+}
+
+@layer base {
+  html {
+    color-scheme: light;
+    -webkit-tap-highlight-color: transparent;
+  }
+
+  body {
+    @apply bg-background text-foreground;
+  }
+
+  /* O Tailwind v4 não aplica mais cursor: pointer em botões. */
+  button:not(:disabled),
+  [role="button"]:not([aria-disabled="true"]),
+  summary {
+    cursor: pointer;
+  }
+
+  ::selection {
+    background: color-mix(in oklab, var(--color-primary) 22%, transparent);
+  }
+}

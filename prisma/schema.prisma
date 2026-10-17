@@ -1,0 +1,34 @@
+// Agente BNCC — modelo de dados
+
+generator client {
+  provider = "prisma-client"
+  output   = "../generated/prisma"
+}
+
+datasource db {
+  provider = "sqlite"
+}
+
+/// Habilidade da BNCC (na Educação Infantil, objetivo de aprendizagem) usada pelo
+/// planejador de aulas. Carregada por `npm run db:seed-bncc`.
+model BnccHabilidade {
+  /// Código oficial, ex.: "EF07CI04".
+  id                 String   @id
+  etapa              String
+  anoFaixa           String   @map("ano_faixa")
+  /// Faixa numérica para filtrar por ano escolar: EI = -2..0, EF = 1..9, EM = 10..12.
+  anoInicio          Int      @map("ano_inicio")
+  anoFim             Int      @map("ano_fim")
+  componente         String
+  unidadeTematica    String?  @map("unidade_tematica")
+  objetoConhecimento String?  @map("objeto_conhecimento")
+  descricao          String
+  /// Vetor float32 normalizado (little-endian) para busca por similaridade de cosseno.
+  embedding          Bytes?
+  /// "modelo@dimensões:hash do texto": o seed só recalcula o embedding quando muda.
+  embeddingKey       String?  @map("embedding_key")
+  updatedAt          DateTime @updatedAt @map("updated_at")
+
+  @@index([componente, anoInicio, anoFim])
+  @@map("bncc_habilidades")
+}

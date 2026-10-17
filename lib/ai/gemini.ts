@@ -1,0 +1,293 @@
+// Cliente REST mínimo da API Gemini (Google AI Studio): fetch com timeout, novas
+// tentativas em falhas temporárias e erros tipados — sem SDK.
+// Sem "server-only" de propósito: o seed da BNCC (tsx) também usa. A chave vem de
+// GEMINI_API_KEY, que nunca chega ao navegador (não tem o prefixo NEXT_PUBLIC_).
+import { normalize } from "../bncc/vetores";
+
+/** text-embedding-004 foi desligado em 14/01/2026; este é o substituto indicado pelo Google. */
+export const GEMINI_EMBEDDING_MODEL = "gemini-embedding-2";
+export const GEMINI_EMBEDDING_DIMENSIONS = 768;
+/** Prefixo de BnccHabilidade.embeddingKey: só vetores do mesmo modelo e tamanho são comparáveis. */
+export const EMBEDDING_KEY_PREFIX = `${GEMINI_EMBEDDING_MODEL}@${GEMINI_EMBEDDING_DIMENSIONS}:`;
+export const DEFAULT_GEMINI_MODEL = "gemini-2.5-flash";
+
+const API_BASE_URL = "https://generativelanguage.googleapis.com/v1beta";
+const EMBED_BATCH_LIMIT = 100;
+const RETRYABLE_STATUS = new Set([429, 500, 502, 503, 504]);
+const BLOCKED_FINISH_REASONS = new Set(["SAFETY", "BLOCKLIST", "PROHIBITED_CONTENT", "SPII", "RECITATION"]);
+
+export type GeminiErrorKind =
+  | "config" // chave ausente/inválida ou modelo inexistente
+  | "rate_limit" // cota do plano gratuito esgotada (429)
+  | "timeout"
+  | "unavailable" // rede ou servidor do Google fora do ar
+  | "blocked" // filtros de segurança do Gemini
+  | "invalid_response"
+  | "bad_request"
+  | "aborted"; // cancelado por quem chamou
+
+export class GeminiError extends Error {
+  constructor(
+    readonly kind: GeminiErrorKind,
+    message: string,
+    /** Quanto esperar antes de tentar de novo, quando o Google informa (429). */
+    readonly retryAfterMs?: number,
+    options?: ErrorOptions,
+  ) {
+    super(message, options);
+    this.name = "GeminiError";
+  }
+}
+
+export interface GeminiRequestOptions {
+  /** Cancelamento externo (ex.: o professor fechou a janela ou a conexão caiu). */
+  signal?: AbortSignal;
+  /** Limite de cada tentativa. */
+  timeoutMs?: number;
+  maxRetries?: number;
+  /** Se o Google pedir para esperar mais que isto, desiste na hora e devolve rate_limit. */
+  maxRetryWaitMs?: number;
+}
+
+export interface GenerateJsonParams {
+  model: string;
+  systemInstruction: string;
+  prompt: string;
+  /** JSON Schema da resposta (structured output). */
+  schema: object;
+  temperature?: number;
+  maxOutputTokens?: number;
+}
+
+export interface GeminiClientConfig {
+  apiKey?: string;
+  fetch?: typeof fetch;
+  sleep?: (ms: number, signal?: AbortSignal) => Promise<void>;
+}
+
+export function isGeminiConfigured(): boolean {
+  return Boolean(process.env.GEMINI_API_KEY?.trim());
+}
+
+export function getGenerationModel(): string {
+  return process.env.GEMINI_MODEL?.trim() || DEFAULT_GEMINI_MODEL;
+}
+
+// O gemini-embedding-2 não aceita task_type: a tarefa vai como prefixo do texto.
+export function formatEmbeddingQuery(query: string): string {
+  return `task: search result | query: ${query}`;
+}
+
+export function formatEmbeddingDocument(title: string | null | undefined, text: string): string {
+  return `title: ${title?.trim() || "none"} | text: ${text}`;
+}
+
+function abortableSleep(ms: number, signal?: AbortSignal): Promise<void> {
+  return new Promise((resolve, reject) => {
+    if (signal?.aborted) return reject(signal.reason);
+    const timer = setTimeout(() => {
+      signal?.removeEventListener("abort", onAbort);
+      resolve();
+    }, ms);
+    function onAbort() {
+      clearTimeout(timer);
+      reject(signal?.reason);
+    }
+    signal?.addEventListener("abort", onAbort, { once: true });
+  });
+}
+
+interface ApiErrorInfo {
+  message: string;
+  reason?: string;
+  retryDelayMs?: number;
+}
+
+/** Lê o corpo de erro padrão das APIs Google: { error: { message, status, details[] } }. */
+async function readApiError(response: Response): Promise<ApiErrorInfo> {
+  const fallback = `HTTP ${response.status}`;
+  const retryAfterHeader = Number(response.headers.get("retry-after"));
+  const headerDelay = Number.isFinite(retryAfterHeader) && retryAfterHeader > 0 ? retryAfterHeader * 1000 : undefined;
+  try {
+    const body = (await response.json()) as {
+      error?: { message?: string; details?: Array<{ "@type"?: string; retryDelay?: string; reason?: string }> };
+    };
+    const details = body.error?.details ?? [];
+    const retryDelay = details.find((detail) => detail["@type"]?.endsWith("RetryInfo"))?.retryDelay;
+    const seconds = retryDelay ? Number.parseFloat(retryDelay) : Number.NaN;
+    return {
+      message: body.error?.message || fallback,
+      reason: details.find((detail) => detail.reason)?.reason,
+      retryDelayMs: Number.isFinite(seconds) ? Math.ceil(seconds * 1000) : headerDelay,
+    };
+  } catch {
+    return { message: fallback, retryDelayMs: headerDelay };
+  }
+}
+
+function toGeminiError(status: number, info: ApiErrorInfo, model: string): GeminiError {
+  if (status === 429) return new GeminiError("rate_limit", `Cota do Gemini esgotada: ${info.message}`, info.retryDelayMs);
+  if (status === 400 && (info.reason === "API_KEY_INVALID" || /api key/i.test(info.message))) {
+    return new GeminiError("config", "GEMINI_API_KEY inválida.");
+  }
+  if (status === 401 || status === 403) return new GeminiError("config", `Acesso negado pelo Gemini: ${info.message}`);
+  if (status === 404) return new GeminiError("config", `Modelo "${model}" não encontrado na API do Gemini.`);
+  if (status === 400) return new GeminiError("bad_request", `O Gemini recusou a requisição: ${info.message}`);
+  return new GeminiError("unavailable", `Gemini indisponível (${status}): ${info.message}`);
+}
+
+export function createGeminiClient(config: GeminiClientConfig = {}) {
+  const fetchImpl = config.fetch ?? fetch;
+  const sleep = config.sleep ?? abortableSleep;
+
+  async function post(model: string, method: string, body: unknown, options: GeminiRequestOptions): Promise<unknown> {
+    const apiKey = config.apiKey ?? process.env.GEMINI_API_KEY?.trim();
+    if (!apiKey) throw new GeminiError("config", "GEMINI_API_KEY não está definida no .env.");
+
+    const { signal, timeoutMs = 60_000, maxRetries = 2, maxRetryWaitMs = 10_000 } = options;
+
+    for (let attempt = 0; ; attempt += 1) {
+      const timeout = AbortSignal.timeout(timeoutMs);
+      let response: Response;
+      try {
+        response = await fetchImpl(`${API_BASE_URL}/models/${model}:${method}`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json", "x-goog-api-key": apiKey },
+          body: JSON.stringify(body),
+          signal: signal ? AbortSignal.any([signal, timeout]) : timeout,
+        });
+      } catch (error) {
+        if (signal?.aborted) throw new GeminiError("aborted", "Requisição cancelada.", undefined, { cause: error });
+        // Timeout não é repetido: quem está esperando já esperou o bastante.
+        if (timeout.aborted) {
+          throw new GeminiError("timeout", `O Gemini não respondeu em ${timeoutMs / 1000} s.`, undefined, {
+            cause: error,
+          });
+        }
+        if (attempt >= maxRetries) {
+          throw new GeminiError("unavailable", "Falha de rede ao chamar o Gemini.", undefined, { cause: error });
+        }
+        await wait(backoffMs(attempt), signal);
+        continue;
+      }
+
+      if (response.ok) {
+        try {
+          return await response.json();
+        } catch (error) {
+          if (signal?.aborted) throw new GeminiError("aborted", "Requisição cancelada.", undefined, { cause: error });
+          if (timeout.aborted) throw new GeminiError("timeout", "O Gemini demorou demais para responder.");
+          throw new GeminiError("invalid_response", "O Gemini devolveu um corpo que não é JSON.", undefined, {
+            cause: error,
+          });
+        }
+      }
+
+      const info = await readApiError(response);
+      const error = toGeminiError(response.status, info, model);
+      const delay = info.retryDelayMs ?? backoffMs(attempt);
+      if (!RETRYABLE_STATUS.has(response.status) || attempt >= maxRetries || delay > maxRetryWaitMs) throw error;
+      await wait(delay, signal);
+    }
+  }
+
+  async function wait(ms: number, signal: AbortSignal | undefined): Promise<void> {
+    try {
+      await sleep(ms, signal);
+    } catch (error) {
+      throw new GeminiError("aborted", "Requisição cancelada.", undefined, { cause: error });
+    }
+  }
+
+  /** Gera embeddings normalizados (um por texto, na mesma ordem). */
+  async function embed(texts: readonly string[], options: GeminiRequestOptions = {}): Promise<Float32Array[]> {
+    const vectors: Float32Array[] = [];
+    for (let start = 0; start < texts.length; start += EMBED_BATCH_LIMIT) {
+      const batch = texts.slice(start, start + EMBED_BATCH_LIMIT);
+      const result = (await post(
+        GEMINI_EMBEDDING_MODEL,
+        "batchEmbedContents",
+        {
+          requests: batch.map((text) => ({
+            model: `models/${GEMINI_EMBEDDING_MODEL}`,
+            content: { parts: [{ text }] },
+            outputDimensionality: GEMINI_EMBEDDING_DIMENSIONS,
+          })),
+        },
+        { timeoutMs: 30_000, ...options },
+      )) as { embeddings?: Array<{ values?: number[] }> };
+
+      const embeddings = result.embeddings ?? [];
+      if (embeddings.length !== batch.length) {
+        throw new GeminiError("invalid_response", `Esperava ${batch.length} embeddings, recebi ${embeddings.length}.`);
+      }
+      for (const embedding of embeddings) {
+        if (embedding.values?.length !== GEMINI_EMBEDDING_DIMENSIONS) {
+          throw new GeminiError("invalid_response", `Embedding com ${embedding.values?.length ?? 0} dimensões.`);
+        }
+        vectors.push(normalize(embedding.values));
+      }
+    }
+    return vectors;
+  }
+
+  /** Gera uma resposta JSON que segue `schema` e devolve o objeto já interpretado. */
+  async function generateJson(params: GenerateJsonParams, options: GeminiRequestOptions = {}): Promise<unknown> {
+    const result = (await post(
+      params.model,
+      "generateContent",
+      {
+        systemInstruction: { parts: [{ text: params.systemInstruction }] },
+        contents: [{ role: "user", parts: [{ text: params.prompt }] }],
+        generationConfig: {
+          responseMimeType: "application/json",
+          responseJsonSchema: params.schema,
+          temperature: params.temperature ?? 0.4,
+          maxOutputTokens: params.maxOutputTokens ?? 8192,
+        },
+      },
+      options,
+    )) as {
+      promptFeedback?: { blockReason?: string };
+      candidates?: Array<{ finishReason?: string; content?: { parts?: Array<{ text?: string; thought?: boolean }> } }>;
+    };
+
+    if (result.promptFeedback?.blockReason) {
+      throw new GeminiError("blocked", `Pedido bloqueado pelo Gemini (${result.promptFeedback.blockReason}).`);
+    }
+    const candidate = result.candidates?.[0];
+    const finishReason = candidate?.finishReason ?? "";
+    if (BLOCKED_FINISH_REASONS.has(finishReason)) {
+      throw new GeminiError("blocked", `Resposta bloqueada pelo Gemini (${finishReason}).`);
+    }
+    if (finishReason === "MAX_TOKENS") {
+      throw new GeminiError("invalid_response", "A resposta do Gemini foi cortada por excesso de tamanho.");
+    }
+
+    const text = (candidate?.content?.parts ?? [])
+      .filter((part) => !part.thought)
+      .map((part) => part.text ?? "")
+      .join("")
+      .trim();
+    if (!text) throw new GeminiError("invalid_response", "O Gemini devolveu uma resposta vazia.");
+
+    try {
+      return JSON.parse(text);
+    } catch (error) {
+      throw new GeminiError("invalid_response", "A resposta do Gemini não é um JSON válido.", undefined, {
+        cause: error,
+      });
+    }
+  }
+
+  return { embed, generateJson };
+}
+
+function backoffMs(attempt: number): number {
+  return 1000 * 2 ** attempt + Math.floor(Math.random() * 250);
+}
+
+export type GeminiClient = ReturnType<typeof createGeminiClient>;
+
+/** Cliente padrão, com a chave do .env. */
+export const gemini = createGeminiClient();

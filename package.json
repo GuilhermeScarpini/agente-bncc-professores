@@ -1,0 +1,54 @@
+{
+  "name": "agente-bncc",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Agente pedagógico da BNCC: busca semântica nas habilidades oficiais e geração de planos de aula com Gemini, exposto como API.",
+  "scripts": {
+    "setup": "node scripts/setup-env.mjs && prisma generate && prisma db push",
+    "predev": "npm run setup",
+    "dev": "next dev -p 3200",
+    "build": "prisma generate && next build",
+    "start": "next start -p 3200",
+    "lint": "eslint .",
+    "typecheck": "tsc --noEmit",
+    "test": "tsx --test lib/**/*.test.ts",
+    "db:push": "prisma db push",
+    "db:seed-bncc": "tsx scripts/seed-bncc.ts",
+    "db:studio": "prisma studio",
+    "postinstall": "node scripts/setup-env.mjs && prisma generate"
+  },
+  "dependencies": {
+    "@prisma/adapter-better-sqlite3": "^7.10.0",
+    "@prisma/client": "^7.10.0",
+    "better-sqlite3": "12.11.1",
+    "clsx": "^2.1.1",
+    "lucide-react": "^1.54.0",
+    "next": "^16.3.7",
+    "react": "^19.3.0",
+    "react-dom": "^19.3.0",
+    "server-only": "^0.0.1",
+    "tailwind-merge": "^3.7.0",
+    "zod": "^4.6.5"
+  },
+  "devDependencies": {
+    "@tailwindcss/postcss": "^4.3.3",
+    "@types/node": "^24.19.1",
+    "@types/react": "^19.3.0",
+    "@types/react-dom": "^19.3.0",
+    "dotenv": "^18.0.7",
+    "eslint": "^9.39.5",
+    "eslint-config-next": "^16.3.7",
+    "prisma": "^7.10.0",
+    "tailwindcss": "^4.3.3",
+    "tsx": "^4.23.15",
+    "typescript": "~5.9"
+  },
+  "allowScripts": {
+    "better-sqlite3@12.11.1": true,
+    "prisma@7.10.1": true,
+    "@prisma/engines@7.10.1": true,
+    "esbuild@0.28.2": true,
+    "unrs-resolver@1.12.2": true
+  }
+}
