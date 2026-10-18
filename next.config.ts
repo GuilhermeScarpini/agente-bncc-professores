@@ -9,6 +9,8 @@ const securityHeaders = [
 const nextConfig: NextConfig = {
   poweredByHeader: false,
   serverExternalPackages: ["better-sqlite3"],
+  // A base é aberta pelo caminho (DATABASE_URL), não importada: sem isto ela fica fora do pacote da Vercel.
+  outputFileTracingIncludes: { "/**": ["./bncc.db"] },
   async headers() {
     return [{ source: "/:path*", headers: securityHeaders }];
   },

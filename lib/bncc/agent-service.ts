@@ -5,14 +5,18 @@ import {
   formatEmbeddingQuery,
   gemini,
   getGenerationModel,
+  getThinkingLevel,
   type GeminiRequestOptions,
 } from "@/lib/ai/gemini";
+import { rotuloBimestre, type Bimestre } from "./bimestres";
 import { findAnoEscolar } from "./codigos";
 import { formatarPlanoComoTexto, type HabilidadeConsultada, type PlanoGerado } from "./plano";
 import { SYSTEM_PROMPT, montarPlano, montarPromptUsuario, respostaPlanoSchema, schemaRespostaPlano } from "./prompt";
+import { SYSTEM_PROMPT_PROVA, montarPromptProva, montarProva, respostaProvaSchema, schemaRespostaProva } from "./prompt-prova";
+import { formatarGabaritoComoTexto, formatarProvaComoTexto, type FormatoProva, type ProvaGerada } from "./prova";
 import { bytesToVector, topKBySimilarity } from "./vetores";
 
-export type BnccAgentErrorKind = "base_vazia" | "sem_resultados" | "resposta_invalida";
+export type BnccAgentErrorKind = "base_vazia" | "sem_resultados" | "habilidade_inexistente" | "resposta_invalida";
 
 export class BnccAgentError extends Error {
   constructor(
@@ -32,7 +36,34 @@ export interface BuscaHabilidades {
   limite?: number;
 }
 
+export interface PedidoPlano {
+  /** Tema livre: as habilidades vêm da busca semântica. */
+  tema?: string;
+  /** Códigos escolhidos pelo professor na lista: dispensam o tema e a busca. */
+  habilidades?: string[];
+  /** Orientações livres do professor (turma, recursos, tempo, adaptações). */
+  complemento?: string;
+  componente?: string;
+  anoEscolar?: string;
+  bimestre?: Bimestre;
+}
+
+export interface PedidoProva extends PedidoPlano {
+  quantidade: number;
+  formato: FormatoProva;
+}
+
 const HABILIDADES_NO_CONTEXTO = 5;
+
+const camposDaHabilidade = {
+  id: true,
+  descricao: true,
+  etapa: true,
+  anoFaixa: true,
+  componente: true,
+  unidadeTematica: true,
+  objetoConhecimento: true,
+} as const;
 
 /** Só habilidades com embedding do modelo atual entram na busca. */
 const comEmbeddingAtual = { embeddingKey: { startsWith: EMBEDDING_KEY_PREFIX } };
@@ -53,16 +84,7 @@ async function buscarHabilidades(
       // Faixas como "6º ao 9º ano" valem para qualquer ano dentro delas.
       ...(ano ? { anoInicio: { lte: ano.fim }, anoFim: { gte: ano.inicio } } : {}),
     },
-    select: {
-      id: true,
-      descricao: true,
-      etapa: true,
-      anoFaixa: true,
-      componente: true,
-      unidadeTematica: true,
-      objetoConhecimento: true,
-      embedding: true,
-    },
+    select: { ...camposDaHabilidade, embedding: true },
   });
 
   if (candidatas.length === 0) {
@@ -88,21 +110,73 @@ async function buscarHabilidades(
   }));
 }
 
+/** As habilidades escolhidas na lista, na ordem do pedido, com o texto oficial da base (sem chamar a API). */
+async function buscarHabilidadesPorCodigo(codigos: readonly string[]): Promise<HabilidadeConsultada[]> {
+  const registros = await prisma.bnccHabilidade.findMany({ where: { id: { in: [...codigos] } }, select: camposDaHabilidade });
+  const porCodigo = new Map(registros.map(({ id, ...habilidade }) => [id, { codigo: id, ...habilidade, similaridade: 1 }]));
+  const faltando = codigos.filter((codigo) => !porCodigo.has(codigo));
+  if (faltando.length > 0) {
+    throw new BnccAgentError(
+      "habilidade_inexistente",
+      `Habilidade(s) fora da base: ${faltando.join(", ")} (rode npm run db:seed-bncc).`,
+    );
+  }
+  return codigos.map((codigo) => porCodigo.get(codigo)!);
+}
+
+/** O que planos e provas têm em comum: as habilidades (escolhidas ou buscadas) e o cabeçalho. */
+async function prepararGeracao(pedido: PedidoPlano, signal: AbortSignal | undefined) {
+  const escolhidas = Boolean(pedido.habilidades?.length);
+  const consultadas = escolhidas
+    ? await buscarHabilidadesPorCodigo(pedido.habilidades!)
+    : await buscarHabilidades({ ...pedido, tema: pedido.tema ?? "" }, { signal, timeoutMs: 20_000 });
+  const ano = findAnoEscolar(pedido.anoEscolar)?.label;
+  const bimestre = pedido.bimestre ? rotuloBimestre(pedido.bimestre) : undefined;
+  const model = getGenerationModel();
+  return {
+    escolhidas,
+    consultadas,
+    tema: escolhidas ? consultadas.map((habilidade) => habilidade.descricao).join(" ") : (pedido.tema ?? ""),
+    ano,
+    bimestre,
+    model,
+    thinkingLevel: getThinkingLevel(model),
+    contexto: {
+      origem: escolhidas ? ("habilidade_escolhida" as const) : ("busca_semantica" as const),
+      identificacao: {
+        componente: pedido.componente ?? (escolhidas ? consultadas[0]!.componente : null),
+        ano: ano ?? null,
+        bimestre: bimestre ?? null,
+      },
+      complemento: pedido.complemento ?? null,
+    },
+  };
+}
+
 /** Recupera as habilidades oficiais e gera um plano de aula ancorado nelas. */
-async function gerarPlano(busca: BuscaHabilidades, options: { signal?: AbortSignal } = {}): Promise<PlanoGerado> {
-  const consultadas = await buscarHabilidades(busca, { signal: options.signal, timeoutMs: 20_000 });
+async function gerarPlano(pedido: PedidoPlano, options: { signal?: AbortSignal } = {}): Promise<PlanoGerado> {
+  const { escolhidas, consultadas, tema, ano, bimestre, model, thinkingLevel, contexto } = await prepararGeracao(
+    pedido,
+    options.signal,
+  );
 
   const resposta = await gemini.generateJson(
     {
-      model: getGenerationModel(),
+      model,
+      thinkingLevel,
       systemInstruction: SYSTEM_PROMPT,
       prompt: montarPromptUsuario({
-        tema: busca.tema,
-        componente: busca.componente,
-        anoEscolar: findAnoEscolar(busca.anoEscolar)?.label,
+        tema: escolhidas ? undefined : tema,
+        complemento: pedido.complemento,
+        componente: pedido.componente,
+        anoEscolar: ano,
+        bimestre,
         habilidades: consultadas,
       }),
-      schema: schemaRespostaPlano(consultadas.map((habilidade) => habilidade.codigo)),
+      schema: schemaRespostaPlano(
+        consultadas.map((habilidade) => habilidade.codigo),
+        { todas: escolhidas },
+      ),
     },
     { signal: options.signal, timeoutMs: 75_000, maxRetryWaitMs: 5_000 },
   );
@@ -111,8 +185,48 @@ async function gerarPlano(busca: BuscaHabilidades, options: { signal?: AbortSign
   if (!parsed.success) {
     throw new BnccAgentError("resposta_invalida", `Resposta fora do formato: ${parsed.error.issues[0]?.message}`);
   }
-  const plano = montarPlano(busca.tema, parsed.data, consultadas);
+  const plano = montarPlano(tema, parsed.data, consultadas, contexto);
   return { ...plano, texto: formatarPlanoComoTexto(plano) };
 }
 
-export const bnccAgentService = { buscarHabilidades, gerarPlano };
+/** Recupera as habilidades oficiais e gera uma prova com gabarito ancorada nelas. */
+async function gerarProva(pedido: PedidoProva, options: { signal?: AbortSignal } = {}): Promise<ProvaGerada> {
+  const { escolhidas, consultadas, tema, ano, bimestre, model, thinkingLevel, contexto } = await prepararGeracao(
+    pedido,
+    options.signal,
+  );
+
+  const resposta = await gemini.generateJson(
+    {
+      model,
+      thinkingLevel,
+      systemInstruction: SYSTEM_PROMPT_PROVA,
+      prompt: montarPromptProva({
+        tema: escolhidas ? undefined : tema,
+        complemento: pedido.complemento,
+        componente: pedido.componente,
+        anoEscolar: ano,
+        bimestre,
+        quantidade: pedido.quantidade,
+        formato: pedido.formato,
+        habilidades: consultadas,
+      }),
+      schema: schemaRespostaProva(
+        consultadas.map((habilidade) => habilidade.codigo),
+        { quantidade: pedido.quantidade, formato: pedido.formato },
+      ),
+      // 20 questões com alternativas e critérios passam de 8 mil tokens.
+      maxOutputTokens: 16_384,
+    },
+    { signal: options.signal, timeoutMs: 90_000, maxRetryWaitMs: 5_000 },
+  );
+
+  const parsed = respostaProvaSchema.safeParse(resposta);
+  if (!parsed.success) {
+    throw new BnccAgentError("resposta_invalida", `Resposta fora do formato: ${parsed.error.issues[0]?.message}`);
+  }
+  const prova = montarProva(parsed.data, consultadas, { ...contexto, tema });
+  return { ...prova, textoProva: formatarProvaComoTexto(prova), textoGabarito: formatarGabaritoComoTexto(prova) };
+}
+
+export const bnccAgentService = { buscarHabilidades, buscarHabilidadesPorCodigo, gerarPlano, gerarProva };

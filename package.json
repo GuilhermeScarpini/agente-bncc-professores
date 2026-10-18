@@ -12,7 +12,7 @@
     "start": "next start -p 3200",
     "lint": "eslint .",
     "typecheck": "tsc --noEmit",
-    "test": "tsx --test lib/**/*.test.ts",
+    "test": "tsx --test \"lib/**/*.test.ts\"",
     "db:push": "prisma db push",
     "db:seed-bncc": "tsx scripts/seed-bncc.ts",
     "db:studio": "prisma studio",

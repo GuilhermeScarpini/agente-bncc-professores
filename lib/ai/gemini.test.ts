@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
-import { GEMINI_EMBEDDING_DIMENSIONS, GeminiError, createGeminiClient } from "./gemini";
+import { GEMINI_EMBEDDING_DIMENSIONS, GeminiError, createGeminiClient, getThinkingLevel } from "./gemini";
 
 type Handler = (url: string, init: RequestInit) => Response | Promise<Response>;
 
@@ -151,6 +151,14 @@ describe("generateJson", () => {
     assert.equal(body.generationConfig.responseMimeType, "application/json");
     assert.deepEqual(body.generationConfig.responseJsonSchema, { type: "object" });
     assert.deepEqual(body.systemInstruction, { parts: [{ text: "sys" }] });
+    assert.equal(body.generationConfig.thinkingConfig, undefined);
+  });
+
+  it("envia o nível de raciocínio quando informado", async () => {
+    const { client, calls } = fakeClient(planResponse('{"a":1}'));
+    await client.generateJson({ ...params, model: "gemini-3.5-flash", thinkingLevel: "low" });
+    const body = calls[0]!.body as { generationConfig: Record<string, unknown> };
+    assert.deepEqual(body.generationConfig.thinkingConfig, { thinkingLevel: "low" });
   });
 
   it("trata bloqueios, cortes e JSON inválido", async () => {
@@ -164,6 +172,26 @@ describe("generateJson", () => {
     for (const [handler, kind] of cases) {
       const { client } = fakeClient(handler);
       await assert.rejects(client.generateJson(params), (error: GeminiError) => error.kind === kind, kind);
+    }
+  });
+});
+
+describe("getThinkingLevel", () => {
+  it("usa low nos modelos Gemini 3+ e respeita GEMINI_THINKING_LEVEL", () => {
+    const anterior = process.env.GEMINI_THINKING_LEVEL;
+    try {
+      delete process.env.GEMINI_THINKING_LEVEL;
+      assert.equal(getThinkingLevel("gemini-3.5-flash"), "low");
+      process.env.GEMINI_THINKING_LEVEL = "HIGH";
+      assert.equal(getThinkingLevel("gemini-3.8-flash"), "high");
+      process.env.GEMINI_THINKING_LEVEL = "máximo";
+      assert.equal(getThinkingLevel("gemini-3.5-flash"), "low");
+      // Modelos antigos e apelidos não aceitam thinkingLevel: não enviamos.
+      assert.equal(getThinkingLevel("gemini-2.5-flash"), undefined);
+      assert.equal(getThinkingLevel("gemini-flash-latest"), undefined);
+    } finally {
+      if (anterior === undefined) delete process.env.GEMINI_THINKING_LEVEL;
+      else process.env.GEMINI_THINKING_LEVEL = anterior;
     }
   });
 });

@@ -4,7 +4,7 @@ import "./globals.css";
 
 export const metadata: Metadata = {
   title: "Agente BNCC",
-  description: "Planos de aula ancorados nas habilidades oficiais da BNCC.",
+  description: "Planos de aula e provas ancorados nas habilidades oficiais da BNCC.",
   robots: { index: false, follow: false },
 };
 

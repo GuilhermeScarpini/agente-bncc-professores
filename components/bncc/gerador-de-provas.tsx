@@ -1,0 +1,133 @@
+"use client";
+
+import { FileCheck2 } from "lucide-react";
+import { useEffect, useRef, useState, type FormEvent } from "react";
+import { Alert } from "@/components/ui/alert";
+import { Button } from "@/components/ui/button";
+import { Field, Select } from "@/components/ui/input";
+import { useGerarProva } from "@/hooks/use-gerar-plano";
+import type { DisciplinaComHabilidades } from "@/lib/bncc/calendario";
+import { FORMATOS_PROVA, QUESTOES, ROTULOS_FORMATO, type FormatoProva } from "@/lib/bncc/prova";
+import { ProvaView } from "./prova-view";
+import {
+  CampoComplemento,
+  CarregandoGeracao,
+  DicaDosFiltros,
+  FiltrosBncc,
+  ListaDeHabilidades,
+  useSelecaoBncc,
+} from "./selecao-bncc";
+
+const OPCOES_DE_QUANTIDADE = [5, 8, 10, 12, 15, 20].filter((n) => n >= QUESTOES.minimo && n <= QUESTOES.maximo);
+
+const ETAPAS_DO_CARREGAMENTO = [
+  { ateMs: 3_000, texto: "Lendo as habilidades escolhidas na BNCC…" },
+  { ateMs: 30_000, texto: "Escrevendo as questões, as alternativas e o gabarito…" },
+  { ateMs: Number.POSITIVE_INFINITY, texto: "Quase lá: conferindo as questões e o gabarito…" },
+];
+
+/**
+ * Gerador de provas guiado, no mesmo fluxo do planejador: disciplina, ano e bimestre, habilidades
+ * marcadas, número de questões, formato e um complemento opcional.
+ */
+export function GeradorDeProvas({ endpoint, disciplinas }: { endpoint: string; disciplinas: DisciplinaComHabilidades[] }) {
+  const selecao = useSelecaoBncc(disciplinas);
+  const [quantidade, setQuantidade] = useState<number>(QUESTOES.padrao);
+  const [formato, setFormato] = useState<FormatoProva>("mista");
+  const [complemento, setComplemento] = useState("");
+  const { prova, pending, error, fieldErrors, gerar, cancelar } = useGerarProva(endpoint);
+  const resultadoRef = useRef<HTMLDivElement>(null);
+  const { filtros, periodo, selecionadas } = selecao;
+
+  useEffect(() => {
+    if (pending) resultadoRef.current?.scrollIntoView({ behavior: "smooth", block: "start" });
+  }, [pending]);
+
+  function handleSubmit(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    if (pending || !filtros || selecionadas.length === 0) return;
+    void gerar({ ...filtros, habilidades: selecionadas, complemento, quantidade, formato });
+  }
+
+  return (
+    <div className="space-y-5">
+      <FiltrosBncc selecao={selecao} pending={pending} />
+
+      {filtros && periodo ? (
+        <form onSubmit={handleSubmit} className="space-y-4" noValidate>
+          <ListaDeHabilidades selecao={selecao} pending={pending} finalidade="para a prova" />
+
+          {periodo.habilidades.length > 0 ? (
+            <>
+              <div className="grid gap-3 sm:grid-cols-2">
+                <Field label="Número de questões" htmlFor="prova-quantidade" error={fieldErrors?.quantidade?.[0]}>
+                  <Select
+                    id="prova-quantidade"
+                    value={quantidade}
+                    onChange={(event) => setQuantidade(Number(event.target.value))}
+                    disabled={pending}
+                  >
+                    {OPCOES_DE_QUANTIDADE.map((n) => (
+                      <option key={n} value={n}>
+                        {n} questões
+                      </option>
+                    ))}
+                  </Select>
+                </Field>
+                <Field label="Formato" htmlFor="prova-formato" error={fieldErrors?.formato?.[0]}>
+                  <Select
+                    id="prova-formato"
+                    value={formato}
+                    onChange={(event) => setFormato(event.target.value as FormatoProva)}
+                    disabled={pending}
+                  >
+                    {FORMATOS_PROVA.map((item) => (
+                      <option key={item} value={item}>
+                        {ROTULOS_FORMATO[item]}
+                      </option>
+                    ))}
+                  </Select>
+                </Field>
+              </div>
+
+              <CampoComplemento
+                label="Complemento para a prova (opcional)"
+                placeholder="Ex.: questões curtas, usar situações de compra e venda, incluir uma questão com tabela, prova adaptada para estudante com dislexia."
+                value={complemento}
+                onChange={setComplemento}
+                pending={pending}
+                error={fieldErrors?.complemento?.[0]}
+              />
+
+              {error ? <Alert variant="error">{error}</Alert> : null}
+
+              <div className="flex flex-col-reverse gap-2 sm:flex-row sm:items-center sm:justify-end">
+                {pending ? (
+                  <Button variant="outline" onClick={cancelar}>
+                    Cancelar
+                  </Button>
+                ) : null}
+                <Button type="submit" loading={pending} disabled={selecionadas.length === 0}>
+                  {pending ? null : <FileCheck2 className="size-4" aria-hidden />}
+                  {selecionadas.length === 0 ? "Escolha ao menos uma habilidade" : `Gerar prova com ${quantidade} questões`}
+                </Button>
+              </div>
+            </>
+          ) : null}
+        </form>
+      ) : (
+        <DicaDosFiltros selecao={selecao} />
+      )}
+
+      <div ref={resultadoRef} className="scroll-mt-4">
+        {pending ? (
+          <CarregandoGeracao etapas={ETAPAS_DO_CARREGAMENTO} />
+        ) : prova ? (
+          <div className="border-t border-border pt-5">
+            <ProvaView prova={prova} />
+          </div>
+        ) : null}
+      </div>
+    </div>
+  );
+}

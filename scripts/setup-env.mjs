@@ -8,7 +8,9 @@ const root = resolve(import.meta.dirname, "..");
 const envPath = resolve(root, ".env");
 const examplePath = resolve(root, ".env.example");
 
-if (existsSync(envPath)) {
+// Na Vercel (e em CI) as variáveis vêm do painel: um .env gerado aqui criaria uma chave
+// aleatória que ninguém conhece no lugar de uma variável esquecida.
+if (existsSync(envPath) || process.env.VERCEL || process.env.CI) {
   process.exit(0);
 }
 

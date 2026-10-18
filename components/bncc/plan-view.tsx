@@ -28,6 +28,12 @@ interface PlanViewProps {
 /** Plano de aula gerado, com os códigos oficiais da BNCC em destaque. */
 export function PlanView({ plano, onPublicar, publicarLabel = "Publicar" }: PlanViewProps) {
   const { copied, copy } = useCopyToClipboard();
+  const escolhida = plano.origem === "habilidade_escolhida";
+  const identificacao = [
+    { rotulo: "Componente curricular", valor: plano.identificacao.componente },
+    { rotulo: "Ano", valor: plano.identificacao.ano },
+    { rotulo: "Bimestre", valor: plano.identificacao.bimestre },
+  ].filter((item) => item.valor);
 
   return (
     <article className="space-y-5" aria-label="Plano de aula gerado">
@@ -38,6 +44,22 @@ export function PlanView({ plano, onPublicar, publicarLabel = "Publicar" }: Plan
           ))}
         </div>
         <h3 className="text-lg font-extrabold leading-tight">{plano.titulo}</h3>
+        {identificacao.length > 0 ? (
+          <dl className="flex flex-wrap gap-x-4 gap-y-1 text-sm">
+            {identificacao.map((item) => (
+              <div key={item.rotulo} className="flex gap-1">
+                <dt className="text-muted-foreground">{item.rotulo}:</dt>
+                <dd className="font-semibold">{item.valor}</dd>
+              </div>
+            ))}
+          </dl>
+        ) : null}
+        {plano.complemento ? (
+          <p className="text-sm">
+            <span className="text-muted-foreground">Orientações do professor: </span>
+            {plano.complemento}
+          </p>
+        ) : null}
         {plano.duracao ? (
           <p className="flex items-center gap-1.5 text-sm text-muted-foreground">
             <Clock className="size-4" aria-hidden />
@@ -52,7 +74,7 @@ export function PlanView({ plano, onPublicar, publicarLabel = "Publicar" }: Plan
         </Alert>
       ) : null}
 
-      <Section icon={BookOpenCheck} title="Habilidades da BNCC">
+      <Section icon={BookOpenCheck} title={plano.habilidades.length === 1 ? "Habilidade da BNCC" : "Habilidades da BNCC"}>
         <ul className="space-y-3">
           {plano.habilidades.map((habilidade) => (
             <li key={habilidade.codigo} className="rounded-xl border border-border bg-muted/40 p-3">
@@ -67,7 +89,7 @@ export function PlanView({ plano, onPublicar, publicarLabel = "Publicar" }: Plan
               </blockquote>
               {habilidade.justificativa ? (
                 <p className="mt-2 text-sm">
-                  <span className="font-semibold">Por que: </span>
+                  <span className="font-semibold">{escolhida ? "Como a aula desenvolve: " : "Por que: "}</span>
                   {habilidade.justificativa}
                 </p>
               ) : null}
@@ -116,23 +138,25 @@ export function PlanView({ plano, onPublicar, publicarLabel = "Publicar" }: Plan
         </ul>
       </Section>
 
-      <details className="rounded-xl border border-border px-3 py-2 text-sm">
-        <summary className="font-semibold text-muted-foreground">
-          Habilidades consultadas na BNCC ({plano.consultadas.length})
-        </summary>
-        <ul className="mt-2 space-y-2 pb-1">
-          {plano.consultadas.map((habilidade) => (
-            <li key={habilidade.codigo}>
-              <span className="font-mono text-xs font-semibold">{habilidade.codigo}</span>{" "}
-              <span className="text-xs text-muted-foreground">
-                ({habilidade.componente} · {habilidade.anoFaixa} · {Math.round(habilidade.similaridade * 100)}% de
-                afinidade)
-              </span>
-              <p className="text-foreground/80">{habilidade.descricao}</p>
-            </li>
-          ))}
-        </ul>
-      </details>
+      {escolhida ? null : (
+        <details className="rounded-xl border border-border px-3 py-2 text-sm">
+          <summary className="font-semibold text-muted-foreground">
+            Habilidades consultadas na BNCC ({plano.consultadas.length})
+          </summary>
+          <ul className="mt-2 space-y-2 pb-1">
+            {plano.consultadas.map((habilidade) => (
+              <li key={habilidade.codigo}>
+                <span className="font-mono text-xs font-semibold">{habilidade.codigo}</span>{" "}
+                <span className="text-xs text-muted-foreground">
+                  ({habilidade.componente} · {habilidade.anoFaixa} · {Math.round(habilidade.similaridade * 100)}% de
+                  afinidade)
+                </span>
+                <p className="text-foreground/80">{habilidade.descricao}</p>
+              </li>
+            ))}
+          </ul>
+        </details>
+      )}
 
       <p className="text-xs text-muted-foreground">{AVISO_IA}</p>
 

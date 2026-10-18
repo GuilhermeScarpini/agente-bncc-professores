@@ -11,6 +11,9 @@ next-env.d.ts
 /generated/
 *.db
 *.db-journal
+# A base da BNCC (habilidades + vetores) vai no repositório: o deploy usa o arquivo pronto,
+# sem rodar o seed (o plano gratuito do Gemini gera só 1.000 vetores por dia).
+!bncc.db
 
 # env
 .env

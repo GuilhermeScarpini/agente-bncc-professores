@@ -3,40 +3,49 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { ActionResult, FieldErrors } from "@/lib/action-result";
 import type { PlanoGerado } from "@/lib/bncc/plano";
+import type { FormatoProva, ProvaGerada } from "@/lib/bncc/prova";
 
+/** Corpo de POST /api/v1/planos: um tema livre ou habilidades escolhidas na lista. */
 export interface PedidoPlano {
-  tema: string;
-  componente: string;
-  anoEscolar: string;
+  tema?: string;
+  habilidades?: string[];
+  complemento?: string;
+  componente?: string;
+  anoEscolar?: string;
+  bimestre?: string;
 }
 
-interface State {
-  plano: PlanoGerado | null;
+/** Corpo de POST /api/v1/provas. */
+export interface PedidoProva extends PedidoPlano {
+  quantidade?: number;
+  formato?: FormatoProva;
+}
+
+interface State<T> {
+  resultado: T | null;
   pending: boolean;
   error: string | null;
   fieldErrors?: FieldErrors;
 }
 
-const INITIAL: State = { plano: null, pending: false, error: null };
-
 /**
- * Pede um plano ao endpoint informado. A geração pode ser cancelada (o servidor também
- * interrompe a chamada ao Gemini) e, se for, o plano anterior continua na tela.
+ * Pede uma geração (plano ou prova) ao endpoint informado. Pode ser cancelada (o servidor também
+ * interrompe a chamada ao Gemini) e, se for, o resultado anterior continua na tela.
  */
-export function useGerarPlano(endpoint: string) {
-  const [state, setState] = useState<State>(INITIAL);
+export function useGeracao<TPedido, TResultado>(endpoint: string, oQue: string) {
+  const [state, setState] = useState<State<TResultado>>({ resultado: null, pending: false, error: null });
   const controllerRef = useRef<AbortController | null>(null);
 
   useEffect(() => () => controllerRef.current?.abort(), []);
 
   const gerar = useCallback(
-    async (pedido: PedidoPlano) => {
+    async (pedido: TPedido) => {
       controllerRef.current?.abort();
       const controller = new AbortController();
       controllerRef.current = controller;
       setState((current) => ({ ...current, pending: true, error: null, fieldErrors: undefined }));
 
-      let next: Partial<State>;
+      let next: Partial<State<TResultado>>;
       try {
         const response = await fetch(endpoint, {
           method: "POST",
@@ -45,11 +54,11 @@ export function useGerarPlano(endpoint: string) {
           signal: controller.signal,
         });
         if (!response.headers.get("content-type")?.includes("application/json")) {
-          next = { error: "Não foi possível gerar o plano agora. Tente novamente." };
+          next = { error: `Não foi possível gerar ${oQue} agora. Tente novamente.` };
         } else {
-          const result = (await response.json()) as ActionResult<PlanoGerado>;
+          const result = (await response.json()) as ActionResult<TResultado>;
           next = result.ok
-            ? { plano: result.data ?? null, error: result.data ? null : "O servidor devolveu um plano vazio." }
+            ? { resultado: result.data ?? null, error: result.data ? null : "O servidor devolveu uma resposta vazia." }
             : { error: result.error, fieldErrors: result.fieldErrors };
         }
       } catch {
@@ -61,10 +70,20 @@ export function useGerarPlano(endpoint: string) {
       controllerRef.current = null;
       setState((current) => ({ ...current, ...next, pending: false }));
     },
-    [endpoint],
+    [endpoint, oQue],
   );
 
   const cancelar = useCallback(() => controllerRef.current?.abort(), []);
 
   return { ...state, gerar, cancelar };
+}
+
+export function useGerarPlano(endpoint: string) {
+  const { resultado, ...resto } = useGeracao<PedidoPlano, PlanoGerado>(endpoint, "o plano");
+  return { plano: resultado, ...resto };
+}
+
+export function useGerarProva(endpoint: string) {
+  const { resultado, ...resto } = useGeracao<PedidoProva, ProvaGerada>(endpoint, "a prova");
+  return { prova: resultado, ...resto };
 }

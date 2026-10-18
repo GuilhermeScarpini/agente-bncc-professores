@@ -9,7 +9,14 @@ export const GEMINI_EMBEDDING_MODEL = "gemini-embedding-2";
 export const GEMINI_EMBEDDING_DIMENSIONS = 768;
 /** Prefixo de BnccHabilidade.embeddingKey: só vetores do mesmo modelo e tamanho são comparáveis. */
 export const EMBEDDING_KEY_PREFIX = `${GEMINI_EMBEDDING_MODEL}@${GEMINI_EMBEDDING_DIMENSIONS}:`;
-export const DEFAULT_GEMINI_MODEL = "gemini-2.5-flash";
+/**
+ * gemini-3.5-flash com raciocínio baixo gera um plano em ~4–5 s, com bom português.
+ * Medido em 10/2026: gemini-3.8-flash levou 18–24 s; os modelos "lite" respondem em ~3 s, mas escrevem sem acentos.
+ * (O gemini-2.5-flash não está mais disponível para contas novas.)
+ */
+export const DEFAULT_GEMINI_MODEL = "gemini-3.5-flash";
+export const DEFAULT_THINKING_LEVEL = "low";
+export type ThinkingLevel = "low" | "medium" | "high";
 
 const API_BASE_URL = "https://generativelanguage.googleapis.com/v1beta";
 const EMBED_BATCH_LIMIT = 100;
@@ -57,6 +64,8 @@ export interface GenerateJsonParams {
   schema: object;
   temperature?: number;
   maxOutputTokens?: number;
+  /** Raciocínio antes da resposta (só Gemini 3+). Mais baixo = mais rápido. */
+  thinkingLevel?: ThinkingLevel;
 }
 
 export interface GeminiClientConfig {
@@ -71,6 +80,17 @@ export function isGeminiConfigured(): boolean {
 
 export function getGenerationModel(): string {
   return process.env.GEMINI_MODEL?.trim() || DEFAULT_GEMINI_MODEL;
+}
+
+/**
+ * Quanto o modelo raciocina antes de responder (GEMINI_THINKING_LEVEL). Só os modelos
+ * Gemini 3 em diante aceitam thinkingLevel; para os outros não enviamos nada.
+ */
+export function getThinkingLevel(model: string): ThinkingLevel | undefined {
+  const major = Number(/^gemini-(\d+)/.exec(model)?.[1]);
+  if (!(major >= 3)) return undefined;
+  const nivel = process.env.GEMINI_THINKING_LEVEL?.trim().toLowerCase();
+  return nivel === "low" || nivel === "medium" || nivel === "high" ? nivel : DEFAULT_THINKING_LEVEL;
 }
 
 // O gemini-embedding-2 não aceita task_type: a tarefa vai como prefixo do texto.
@@ -244,6 +264,7 @@ export function createGeminiClient(config: GeminiClientConfig = {}) {
           responseJsonSchema: params.schema,
           temperature: params.temperature ?? 0.4,
           maxOutputTokens: params.maxOutputTokens ?? 8192,
+          ...(params.thinkingLevel ? { thinkingConfig: { thinkingLevel: params.thinkingLevel } } : {}),
         },
       },
       options,
