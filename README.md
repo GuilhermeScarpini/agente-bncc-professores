@@ -124,7 +124,7 @@ curl -X POST http://localhost:3200/api/v1/provas \
 
 A resposta (`data`) traz `origem`, `identificacao`, `complemento`, `titulo`, `instrucoes`, `habilidades` (com o texto oficial), `aviso` e:
 
-- `questoes`: cada uma com `numero`, `habilidade` (código), `tipo` (`multipla_escolha` ou `discursiva`), `enunciado`, `alternativas` (`[{ "letra": "A", "texto": "..." }]`, vazio nas discursivas), `resposta` (a letra, ou a resposta esperada) e `criterios`;
+- `questoes`: cada uma com `numero`, `habilidade` (código), `topico` (o que a questão avalia, até 80 caracteres), `tipo` (`multipla_escolha` ou `discursiva`), `enunciado`, `alternativas` (`[{ "letra": "A", "texto": "..." }]`, vazio nas discursivas), `resposta` (a letra, ou a resposta esperada) e `criterios`;
 - `textoProva`: a prova para os estudantes, sem respostas nem códigos;
 - `textoGabarito`: o gabarito com a habilidade e os critérios de cada questão.
 
@@ -149,7 +149,7 @@ Diz se o agente está pronto (`pronto`, `configurado`, `habilidades`, modelos). 
 3. Chame `POST /api/v1/planos` e `POST /api/v1/provas` **pelo servidor do cliente**, nunca pelo navegador: a chave não pode chegar ao usuário. Aplique no cliente o limite por usuário e as permissões (no turma-social, só a professora gera planos).
 4. Para os menus, leia `GET /api/v1/calendario` (pode ser pelo servidor, com cache).
 
-No turma-social, uma prova `formato: "objetivas"` vira o rascunho da "Nova avaliação" assim: `enunciado` → `statement`, `alternativas` A–D → `optionA`…`optionD`, `resposta` → `correctAnswer`, `habilidade` → `topic` e `criterios` → `explanation`. Os tamanhos cabem nos limites de lá, e o agente já descarta alternativas repetidas, "Todas as anteriores" e "Não sei".
+No turma-social, uma prova `formato: "objetivas"` vira o rascunho da "Nova avaliação" assim: `enunciado` → `statement`, `alternativas` A–D → `optionA`…`optionD`, `resposta` → `correctAnswer`, `topico` → `topic`, `habilidade` → `bnccSkill` e `criterios` → `explanation`. Os tamanhos cabem nos limites de lá, e o agente já descarta alternativas repetidas, "Todas as anteriores" e "Não sei".
 
 ## Dados e modelos
 

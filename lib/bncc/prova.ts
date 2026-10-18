@@ -24,6 +24,8 @@ export interface QuestaoProva {
   numero: number;
   /** Código BNCC (da base) que a questão avalia. */
   habilidade: string;
+  /** O que a questão avalia em poucas palavras ("Multiplicação por 2, 3, 4 e 5"), para agrupar relatórios. */
+  topico: string;
   tipo: "multipla_escolha" | "discursiva";
   enunciado: string;
   /** Quatro alternativas (A a D) nas questões de múltipla escolha; vazio nas discursivas. */

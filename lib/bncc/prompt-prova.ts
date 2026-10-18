@@ -46,6 +46,7 @@ export function schemaRespostaProva(codigosPermitidos: readonly string[], opcoes
           type: "object",
           properties: {
             habilidade: { type: "string", enum: [...codigosPermitidos], description: "Código exato da habilidade avaliada." },
+            topico: texto('O que a questão avalia, em até 6 palavras, sem código (ex.: "Multiplicação por 2, 3, 4 e 5").'),
             tipo: { type: "string", enum: TIPOS[opcoes.formato] },
             enunciado: texto("Enunciado completo, sem códigos BNCC."),
             alternativas: {
@@ -57,7 +58,7 @@ export function schemaRespostaProva(codigosPermitidos: readonly string[], opcoes
             resposta: texto("Múltipla escolha: só a letra (A, B, C ou D). Discursiva: a resposta esperada."),
             criterios: texto("O que a questão avalia e como corrigir."),
           },
-          required: ["habilidade", "tipo", "enunciado", "alternativas", "resposta", "criterios"],
+          required: ["habilidade", "topico", "tipo", "enunciado", "alternativas", "resposta", "criterios"],
         },
       },
       aviso: texto("Vazio, exceto se as habilidades não permitirem uma boa prova: então explique a limitação."),
@@ -76,6 +77,7 @@ export const respostaProvaSchema = z.object({
     .array(
       z.object({
         habilidade: z.string().trim().toUpperCase(),
+        topico: textoOpcional,
         tipo: z.string().trim(),
         enunciado: z.string().trim(),
         alternativas: z.array(z.string()).catch([]),
@@ -170,7 +172,13 @@ export function montarProva(
   const questoes = resposta.questoes.flatMap((questao): Omit<QuestaoProva, "numero">[] => {
     const enunciado = paraEstudante(questao.enunciado);
     if (!porCodigo.has(questao.habilidade) || !enunciado) return [];
-    const base = { habilidade: questao.habilidade, enunciado, criterios: paraProfessor(questao.criterios) };
+    const base = {
+      habilidade: questao.habilidade,
+      // Até 80 caracteres (cabe no "tópico" dos sistemas clientes); sem tópico, usa o código.
+      topico: paraEstudante(questao.topico).slice(0, 80).trim() || questao.habilidade,
+      enunciado,
+      criterios: paraProfessor(questao.criterios),
+    };
 
     if (questao.tipo === "multipla_escolha") {
       const textos = questao.alternativas.map((alternativa) => paraEstudante(semLetra(alternativa)));

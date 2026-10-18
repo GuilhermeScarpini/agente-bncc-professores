@@ -34,6 +34,7 @@ function resposta(questoes: unknown[], extra: Record<string, unknown> = {}) {
 
 const objetiva = {
   habilidade: "EF03MA07",
+  topico: "Multiplicação como soma de parcelas (EF03MA07)",
   tipo: "multipla_escolha",
   enunciado: "Ana tem 3 caixas com 4 lápis cada (EF03MA07).Quantos lápis ela tem?",
   alternativas: ["A) 7", "b) 12", "(C) 10", "16"],
@@ -75,6 +76,9 @@ describe("montarProva", () => {
       ["A:7", "B:12", "C:10", "D:16"],
     );
     assert.equal(q1!.resposta, "B");
+    // O tópico vai para relatórios e buscas: sem código; sem tópico, fica o código.
+    assert.equal(q1!.topico, "Multiplicação como soma de parcelas");
+    assert.equal(q2!.topico, "EF03MA07");
     // O professor vê o código verificado nos critérios.
     assert.ok(q1!.criterios.includes("EF03MA07"));
     assert.equal(q2!.tipo, "discursiva");
