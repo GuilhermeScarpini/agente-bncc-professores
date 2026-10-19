@@ -27,6 +27,8 @@ export interface BuscaHabilidades {
   componente?: string;
   /** Valor de ANOS_ESCOLARES (ex.: "ef-7", "em"). */
   anoEscolar?: string;
+  /** Este ano e os anteriores da mesma etapa (turma que retoma habilidades de anos anteriores). */
+  anoMaximo?: string;
   limite?: number;
 }
 
@@ -74,12 +76,15 @@ async function buscarHabilidades(
   options: GeminiRequestOptions = {},
 ): Promise<HabilidadeConsultada[]> {
   const ano = findAnoEscolar(busca.anoEscolar);
+  const anoMaximo = findAnoEscolar(busca.anoMaximo);
   const candidatas = await prisma.bnccHabilidade.findMany({
     where: {
       ...comEmbeddingAtual,
       ...(busca.componente ? { componente: busca.componente } : {}),
       // Faixas como "6º ao 9º ano" valem para qualquer ano dentro delas.
       ...(ano ? { anoInicio: { lte: ano.fim }, anoFim: { gte: ano.inicio } } : {}),
+      // Do Fundamental em diante, não desce para a Educação Infantil.
+      ...(anoMaximo ? { AND: [{ anoInicio: { lte: anoMaximo.fim } }, { anoFim: { gte: anoMaximo.inicio >= 1 ? 1 : -2 } }] } : {}),
     },
     select: { ...camposDaHabilidade, embedding: true },
   });
@@ -119,6 +124,39 @@ async function buscarHabilidadesPorCodigo(codigos: readonly string[]): Promise<H
     );
   }
   return codigos.map((codigo) => porCodigo.get(codigo)!);
+}
+
+/**
+ * Afinidade mínima (cosseno) para dizer que uma habilidade encaixa no texto do professor. Medido
+ * com o gemini-embedding-2 em questões do 3º ano (out/2026): as que têm habilidade ficaram entre
+ * 0,636 e 0,737; as sem habilidade ("Qual a sua cor favorita?"), entre 0,558 e 0,627.
+ */
+export const AFINIDADE_MINIMA = 0.63;
+
+export interface PedidoSugestao {
+  /** Questão escrita pelo professor (enunciado e alternativas). */
+  texto: string;
+  componente?: string;
+  anoMaximo?: string;
+}
+
+export interface SugestaoDeHabilidades {
+  /** As mais parecidas, da maior afinidade para a menor. */
+  habilidades: HabilidadeConsultada[];
+  /** A primeira encaixa bem (afinidade ≥ AFINIDADE_MINIMA). */
+  encaixa: boolean;
+}
+
+/** Habilidades da BNCC que combinam com uma questão escrita à mão. */
+async function sugerirHabilidades(
+  pedido: PedidoSugestao,
+  options: { signal?: AbortSignal } = {},
+): Promise<SugestaoDeHabilidades> {
+  const habilidades = await buscarHabilidades(
+    { tema: pedido.texto, componente: pedido.componente, anoMaximo: pedido.anoMaximo, limite: 3 },
+    { signal: options.signal, timeoutMs: 20_000 },
+  );
+  return { habilidades, encaixa: (habilidades[0]?.similaridade ?? 0) >= AFINIDADE_MINIMA };
 }
 
 /** O que planos e provas têm em comum: as habilidades (escolhidas ou buscadas) e o cabeçalho. */
@@ -236,4 +274,4 @@ async function gerarProva(pedido: PedidoProva, options: { signal?: AbortSignal }
   };
 }
 
-export const bnccAgentService = { buscarHabilidades, buscarHabilidadesPorCodigo, gerarPlano, gerarProva };
+export const bnccAgentService = { buscarHabilidades, buscarHabilidadesPorCodigo, sugerirHabilidades, gerarPlano, gerarProva };

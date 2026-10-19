@@ -99,5 +99,16 @@ export const gerarProvaSchema = pedidoBase
   })
   .superRefine(conferirHabilidades);
 
+/** Corpo de POST /api/demo/habilidades: a questão escrita pelo professor, para achar a habilidade da BNCC. */
+export const sugerirHabilidadesSchema = z.object({
+  texto: z
+    .string("Escreva a questão antes de procurar.")
+    .trim()
+    .min(10, "Escreva um pouco mais da questão para procurar a habilidade.")
+    .max(2_000, "A questão ficou longa demais para a busca (até 2.000 caracteres)."),
+  componente: optionalChoice(COMPONENTES, "Escolha uma disciplina da lista."),
+  anoMaximo: optionalChoice(ANOS_ESCOLARES_VALORES, "Escolha um ano escolar da lista."),
+});
+
 export type PedidoPlanoValidado = z.infer<typeof gerarPlanoSchema>;
 export type PedidoProvaValidado = z.infer<typeof gerarProvaSchema>;

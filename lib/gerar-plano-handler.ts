@@ -8,7 +8,7 @@ import { BnccAgentError, bnccAgentService } from "@/lib/bncc/agent-service";
 import { PlanoSemAncoragemError } from "@/lib/bncc/prompt";
 import { ProvaSemQuestoesError } from "@/lib/bncc/prompt-prova";
 import { checkRateLimit, formatRetryAfter } from "@/lib/rate-limit";
-import { gerarPlanoSchema, gerarProvaSchema } from "@/lib/validation";
+import { gerarPlanoSchema, gerarProvaSchema, sugerirHabilidadesSchema } from "@/lib/validation";
 
 export function json<T>(body: ActionResult<T>, status = 200, retryAfterMs?: number): Response {
   const headers = retryAfterMs ? { "Retry-After": String(Math.ceil(retryAfterMs / 1000)) } : undefined;
@@ -128,4 +128,13 @@ export function handleGerarPlano(request: Request, rateLimit: RateLimitOptions):
 
 export function handleGerarProva(request: Request, rateLimit: RateLimitOptions): Promise<Response> {
   return handleGeracao(request, rateLimit, { schema: gerarProvaSchema, gerar: bnccAgentService.gerarProva, oQue: "a prova" });
+}
+
+/** Habilidades da BNCC para uma questão escrita à mão (busca semântica, sem gerar texto). */
+export function handleSugerirHabilidades(request: Request, rateLimit: RateLimitOptions): Promise<Response> {
+  return handleGeracao(request, rateLimit, {
+    schema: sugerirHabilidadesSchema,
+    gerar: bnccAgentService.sugerirHabilidades,
+    oQue: "a busca",
+  });
 }
