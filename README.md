@@ -1,20 +1,64 @@
-# Agente BNCC
+# Agente BNCC para professores
 
-Serviço que gera planos de aula ancorados nas habilidades oficiais da **BNCC** (Base Nacional Comum Curricular).
+[![CI](https://github.com/GuilhermeScarpini/agente-bncc-professores/actions/workflows/ci.yml/badge.svg)](https://github.com/GuilhermeScarpini/agente-bncc-professores/actions/workflows/ci.yml)
+[![Licença: MIT](https://img.shields.io/badge/licen%C3%A7a-MIT-blue.svg)](LICENSE)
+
+Gera **planos de aula** e **provas com gabarito** ancorados nas habilidades oficiais da **BNCC** (Base Nacional Comum Curricular). O professor escolhe as habilidades em menus e recebe um material pronto para revisar, editar e baixar em PDF. Sistemas de escola usam o mesmo agente por uma API.
+
+O ponto central é a confiabilidade: a IA escreve o texto, mas os códigos e a descrição de cada habilidade vêm sempre da base oficial. Um código inventado pela IA é descartado antes de chegar ao professor.
+
+## O que ele faz
+
+- **Planos de aula** a partir de até 5 habilidades, com objetivos, metodologia passo a passo e avaliação formativa.
+- **Provas com gabarito**: de 3 a 20 questões (mistas, só objetivas ou só discursivas), cada uma ligada a uma habilidade.
+- **Seleção por ano e bimestre**, juntando habilidades de períodos diferentes (para turmas que retomam conteúdos de anos anteriores).
+- **Edição da prova**: o professor muda título e ano, edita, exclui e adiciona questões. Numa questão escrita à mão, "Procurar código BNCC" acha a habilidade que combina com o texto.
+- **PDFs** do plano e da prova em duas versões: a dos alunos (só as questões, com imagens) e a do professor (gabarito, critérios e o código BNCC de cada questão).
+- **API v1** com chave para outros sistemas, e **escolha da IA** em cada pedido: Gemini ou DeepSeek.
+
+## Destaques técnicos
+
+- **Geração ancorada (RAG).** As habilidades vêm do banco, com o texto literal da BNCC (1.580, extraídas do PDF do MEC). O JSON Schema da resposta só aceita os códigos enviados, e uma conferência depois da IA descarta códigos de fora, questões sem as 4 alternativas, alternativas repetidas e gabaritos inválidos.
+- **Busca semântica sem serviço extra.** Os embeddings (`gemini-embedding-2`, 768 dimensões) ficam no próprio SQLite. A busca filtra por disciplina e ano no banco e ordena por cosseno em memória: são cerca de 1.600 vetores, o que leva milissegundos e dá resultado exato. O limiar de "encaixa" (0,63) foi medido com questões reais.
+- **Duas IAs, um contrato.** Gemini (com o formato de resposta imposto pela API) e DeepSeek (com o schema nas instruções) passam pela mesma validação com Zod. Há timeout, novas tentativas com espera, erros tipados que viram mensagens em português e cancelamento propagado: se o professor cancela, a chamada à IA também para.
+- **PDF no navegador.** As provas e os planos são montados no navegador com `pdf-lib`, com quebra de linha e de página próprias. As imagens que o professor anexa nunca saem do computador dele.
+- **Segurança e custo.** A API exige `Authorization: Bearer`, conferido em tempo constante. As páginas exigem senha, com sessão em cookie assinado. Há limites de uso por IP nas páginas e um limite geral na API, as rotas só aceitam JSON (o que barra formulários de outros sites) e todos os pedidos passam por validação.
+- **Qualidade.** TypeScript estrito, quase 100 testes com `node:test` (prompts, validação, conferência das respostas, PDFs) e CI com tipos, lint, testes e build a cada push.
+- **Deploy simples.** Roda no plano gratuito da Vercel: o banco SQLite com os vetores vai junto no pacote e é aberto só para leitura, sem banco externo.
+
+## Como funciona
+
+```mermaid
+flowchart LR
+  A["Professor marca as habilidades<br/>(ou a API manda um tema)"] --> B{"Habilidades<br/>escolhidas?"}
+  B -- sim --> C["Texto oficial<br/>lido do SQLite"]
+  B -- "não, tema livre" --> D["Embedding do tema (Gemini)<br/>+ busca por cosseno no SQLite"]
+  D --> C
+  C --> E["IA gera o JSON<br/>(Gemini ou DeepSeek)"]
+  E --> F["Conferência: só códigos da base,<br/>4 alternativas, gabarito válido"]
+  F --> G["Plano ou prova na tela<br/>(o professor edita)"]
+  G --> H["PDF no navegador<br/>(alunos e professor)"]
+```
+
+## Demonstração
+
+O agente está publicado em <https://agente-bncc.vercel.app>. As páginas pedem senha, porque cada geração gasta créditos de IA. O `GET /api/v1/status` é público e mostra se o agente está pronto.
+
+**Stack:** Next.js 16 (App Router), React 19 e TypeScript estrito, com Tailwind CSS 4. Os dados ficam em SQLite com Prisma 7. A busca usa o `gemini-embedding-2`; a geração usa o `gemini-3.5-flash` (cerca de 5 s por plano) ou o DeepSeek (`deepseek-flash` ou `deepseek-v4-pro`). Os PDFs usam `pdf-lib`, e a validação, Zod.
+
+## Em detalhes
 
 Na página de demonstração (`/`), o professor não precisa digitar o tema: escolhe a disciplina (as 8 da BNCC no 1º ao 5º ano), o ano e o bimestre nos menus, vê a lista de habilidades daquele período com o texto oficial e marca de 1 a 5 habilidades. Trocar o ano ou o bimestre não desmarca nada: dá para juntar habilidades de períodos diferentes (uma turma com defasagem retoma as de anos anteriores), e as marcadas ficam numa lista com o ano e o bimestre de cada uma. Se quiser, escreve um complemento (turma, tempo, recursos, adaptações). O plano sai preenchido a partir dessas habilidades, com componente curricular, ano e bimestre no cabeçalho: o ano só aparece quando todas são do mesmo ano, e o bimestre, quando todas são do mesmo bimestre.
 
 Pela API, também dá para mandar um tema livre e, se quiser, filtrar por disciplina e ano escolar. Nesse caso o agente:
 
 1. busca as habilidades da BNCC mais parecidas com o tema: filtra por disciplina e ano no banco e ordena por similaridade semântica;
-2. pede ao Gemini um plano ancorado nessas habilidades, com os códigos e a justificativa, os objetivos de aprendizagem, a metodologia passo a passo e a avaliação formativa;
+2. pede à IA (Gemini ou DeepSeek) um plano ancorado nessas habilidades, com os códigos e a justificativa, os objetivos de aprendizagem, a metodologia passo a passo e a avaliação formativa;
 3. confere a resposta: só aparecem códigos que vieram da base, sempre com o texto oficial da BNCC.
 
 No mesmo estilo, ele também gera **provas com gabarito** (página `/provas`): a professora escolhe as habilidades, o número de questões (3 a 20) e o formato (mista, só objetivas ou só discursivas). Cada questão fica ligada a uma habilidade, as de múltipla escolha têm 4 alternativas, e o gabarito traz a resposta e os critérios de correção. Na página, a professora edita, exclui e adiciona questões. Numa questão escrita à mão, o botão "Procurar código BNCC" busca a habilidade que combina com o texto (na disciplina da prova, do ano da turma para trás): se uma encaixa bem, o código já entra na questão; se nenhuma encaixa, a questão pode ficar sem código. Ela também ajusta o título e o ano da prova (a IA sugere, ela muda se quiser; o cabeçalho da prova não leva bimestre), pode anexar uma imagem a cada questão (do computador, com uma descrição para quem não enxerga) e baixa a prova em PDF em duas versões: **para os alunos** (só as questões, com espaço para nome e data) e **para o professor** (cada questão com o código BNCC, a resposta e os critérios, e a lista das habilidades avaliadas). O plano de aula também sai em PDF. Os PDFs são montados no navegador com `pdf-lib`, e as imagens ficam só lá: o agente não guarda arquivos, e elas somem ao gerar outra prova ou recarregar a página.
 
-Ele funciona sozinho (há páginas de demonstração em `/` e `/provas`) e também como API para outros sistemas, como a rede social [turma-social](https://github.com/GuilhermeScarpini/turma-social).
-
-**Stack:** Next.js 16 (App Router), React 19 e TypeScript estrito, com Tailwind CSS 4. Os dados ficam em SQLite com Prisma 7. A IA é o Gemini: `gemini-embedding-2` para a busca e `gemini-3.5-flash` (com raciocínio baixo, ~4–5 s por plano) para os planos, ambos no plano gratuito.
+Ele funciona sozinho (há páginas de demonstração em `/` e `/provas`) e também como API para outros sistemas, como a rede social escolar turma-social (repositório privado).
 
 ## Como rodar
 
@@ -168,10 +212,11 @@ No turma-social, uma prova `formato: "objetivas"` vira o rascunho da "Nova avali
 
 ```
 app/                 páginas de demonstração (/ e /provas) e rotas da API (api/v1, api/demo)
-components/          interface (bncc/ = seleção de habilidades, plano e prova; ui/ = campos e botões)
-hooks/               chamada ao gerador com cancelamento
-lib/ai/              cliente da API do Gemini (timeout, novas tentativas, erros tipados)
+components/          interface (bncc/ = seleção de habilidades, escolha da IA, plano, prova e editor de questão; ui/ = campos e botões)
+hooks/               chamada ao gerador com cancelamento, cópia e download dos PDFs
+lib/ai/              clientes do Gemini e do DeepSeek (timeout, novas tentativas, erros tipados)
 lib/bncc/            códigos da BNCC, bimestres, busca vetorial, prompt, validação da resposta e serviço
+lib/pdf/             PDFs do plano e da prova (montados no navegador com pdf-lib)
 prisma/              schema e dados da BNCC (data/: habilidades e distribuição por bimestre)
 scripts/             preparação do .env e seed da BNCC
 ```
@@ -201,3 +246,7 @@ Cuidados:
 
 - **`npm install` ou `npm run db:seed-bncc` falham com `UNABLE_TO_GET_ISSUER_CERT_LOCALLY`:** a rede, geralmente de empresa, intercepta HTTPS. Rode o comando com `NODE_OPTIONS=--use-system-ca`, por exemplo `NODE_OPTIONS=--use-system-ca npm run db:seed-bncc` no Git Bash.
 - **`better-sqlite3` tenta compilar e pede o Visual Studio:** a versão está fixada em `12.11.1`, que tem binário pronto para Windows.
+
+## Licença
+
+[MIT](LICENSE). Os textos das habilidades são da BNCC, documento público do Ministério da Educação.

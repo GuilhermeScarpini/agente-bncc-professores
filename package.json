@@ -3,7 +3,8 @@
   "version": "0.1.0",
   "private": true,
   "type": "module",
-  "description": "Agente pedagógico da BNCC: busca semântica nas habilidades oficiais e geração de planos de aula com Gemini, exposto como API.",
+  "description": "Agente pedagógico da BNCC: planos de aula e provas com gabarito ancorados nas habilidades oficiais, com busca semântica, Gemini ou DeepSeek e PDFs.",
+  "license": "MIT",
   "scripts": {
     "setup": "node scripts/setup-env.mjs && prisma generate && prisma db push",
     "predev": "npm run setup",
