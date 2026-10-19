@@ -76,8 +76,7 @@ export function PaginaAgente({ ativa, descricao, status, children }: PaginaAgent
       </section>
 
       <p className="px-1 text-xs text-muted-foreground">
-        {status.habilidades} habilidades carregadas · busca com {status.modeloEmbedding} · geração com{" "}
-        {status.modeloGeracao}
+        {status.habilidades} habilidades carregadas · busca com {status.modeloEmbedding}
       </p>
     </main>
   );

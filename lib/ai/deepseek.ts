@@ -2,11 +2,9 @@
 // generateJson do Gemini, para a geração poder usar qualquer uma das duas IAs (ver llm.ts).
 // Sem "server-only", como o gemini.ts. A chave vem de DEEPSEEK_API_KEY (nunca vai ao navegador).
 import { LlmError, abortableSleep, backoffMs } from "./llm-error";
-import type { LlmUsage } from "./providers";
+import { DEEPSEEK_MODELS, DEFAULT_DEEPSEEK_MODEL, type LlmUsage } from "./providers";
 
-export const DEEPSEEK_MODELS = ["deepseek-flash", "deepseek-v4-pro"] as const;
-/** O flash custa uma fração do pro e dá conta de questões curtas do Fundamental I. */
-export const DEFAULT_DEEPSEEK_MODEL = "deepseek-flash";
+export { DEEPSEEK_MODELS, DEFAULT_DEEPSEEK_MODEL };
 /** Quanto o modelo raciocina antes de responder: "low" é bem mais rápido e barato que o padrão ("high"). */
 export const DEFAULT_DEEPSEEK_EFFORT = "low";
 export type DeepSeekEffort = "low" | "high" | "max";

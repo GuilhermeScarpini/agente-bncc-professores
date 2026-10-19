@@ -22,7 +22,11 @@ export default async function DemoPage() {
       status={status}
       descricao="Escolha a disciplina, o ano e o bimestre e marque as habilidades: o agente monta o plano de aula com o texto oficial da BNCC para você revisar."
     >
-      <Planner endpoint="/api/demo/planos" disciplinas={disciplinas} />
+      <Planner
+        endpoint="/api/demo/planos"
+        disciplinas={disciplinas}
+        provedores={status.provedores}
+      />
     </PaginaAgente>
   );
 }

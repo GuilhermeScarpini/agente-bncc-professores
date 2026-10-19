@@ -6,6 +6,7 @@ import {
   ClipboardCheck,
   Clock,
   Copy,
+  FileDown,
   ListOrdered,
   SendHorizontal,
   Target,
@@ -15,8 +16,10 @@ import type { ReactNode } from "react";
 import { Alert } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import { useBaixarPdf } from "@/hooks/use-baixar-pdf";
 import { useCopyToClipboard } from "@/hooks/use-copy-to-clipboard";
 import { AVISO_IA, type PlanoGerado } from "@/lib/bncc/plano";
+import { nomeDeArquivo } from "@/lib/pdf/quebra";
 
 interface PlanViewProps {
   plano: PlanoGerado;
@@ -28,6 +31,7 @@ interface PlanViewProps {
 /** Plano de aula gerado, com os códigos oficiais da BNCC em destaque. */
 export function PlanView({ plano, onPublicar, publicarLabel = "Publicar" }: PlanViewProps) {
   const { copied, copy } = useCopyToClipboard();
+  const { gerando, erro: erroDoPdf, baixar } = useBaixarPdf();
   const escolhida = plano.origem === "habilidade_escolhida";
   const identificacao = [
     { rotulo: "Componente curricular", valor: plano.identificacao.componente },
@@ -160,10 +164,25 @@ export function PlanView({ plano, onPublicar, publicarLabel = "Publicar" }: Plan
 
       <p className="text-xs text-muted-foreground">{AVISO_IA}</p>
 
+      {erroDoPdf ? <Alert variant="error">{erroDoPdf}</Alert> : null}
       <div className="flex flex-col-reverse gap-2 border-t border-border pt-4 sm:flex-row sm:justify-end">
-        <Button variant={onPublicar ? "outline" : "primary"} onClick={() => copy(plano.texto)}>
+        <Button variant="outline" onClick={() => copy(plano.texto)}>
           {copied ? <Check className="size-4" aria-hidden /> : <Copy className="size-4" aria-hidden />}
           {copied ? "Copiado!" : "Copiar plano"}
+        </Button>
+        <Button
+          variant={onPublicar ? "outline" : "primary"}
+          loading={gerando !== null}
+          onClick={() =>
+            void baixar(
+              "plano",
+              async () => (await import("@/lib/pdf/plano-pdf")).gerarPdfDoPlano(plano),
+              nomeDeArquivo("plano-de-aula", plano.titulo),
+            )
+          }
+        >
+          {gerando ? null : <FileDown className="size-4" aria-hidden />}
+          Baixar PDF
         </Button>
         {onPublicar ? (
           <Button onClick={onPublicar}>

@@ -25,7 +25,11 @@ export default async function ProvasPage() {
       status={status}
       descricao="Escolha a disciplina, o ano e o bimestre e marque as habilidades: o agente monta a prova com gabarito a partir do texto oficial da BNCC para você revisar."
     >
-      <GeradorDeProvas endpoint="/api/demo/provas" disciplinas={disciplinas} />
+      <GeradorDeProvas
+        endpoint="/api/demo/provas"
+        disciplinas={disciplinas}
+        provedores={status.provedores}
+      />
     </PaginaAgente>
   );
 }

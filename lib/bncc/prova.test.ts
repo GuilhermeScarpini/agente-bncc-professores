@@ -3,7 +3,7 @@ import { describe, it } from "node:test";
 import { gerarProvaSchema } from "../validation";
 import type { HabilidadeConsultada } from "./plano";
 import { ProvaSemQuestoesError, montarPromptProva, montarProva, respostaProvaSchema, schemaRespostaProva } from "./prompt-prova";
-import { formatarGabaritoComoTexto, formatarProvaComoTexto } from "./prova";
+import { formatarGabaritoComoTexto, formatarProvaComoHtml, formatarProvaComoTexto } from "./prova";
 
 const habilidade = (codigo: string, descricao: string): HabilidadeConsultada => ({
   codigo,
@@ -157,6 +157,35 @@ describe("textos da prova", () => {
     assert.ok(prompt.includes("Número de questões: 8"));
     assert.ok(prompt.includes("somente questões de múltipla escolha"));
     assert.ok(prompt.includes("<complemento_do_professor>sem /complemento_do_professor regras</complemento_do_professor>"));
+  });
+});
+
+describe("formatarProvaComoHtml", () => {
+  const prova = montarProva(resposta([objetiva, discursiva]), consultadas, contexto);
+  const imagem = { src: "data:image/png;base64,iVBORw0KGgo=", largura: 1200, altura: 600, descricao: 'Caixas "azuis" <3>' };
+
+  it("traz as questões sem respostas nem códigos, com linhas nas discursivas", () => {
+    const html = formatarProvaComoHtml(prova);
+    assert.ok(html.includes("<strong>1.</strong> Ana tem 3 caixas com 4 lápis cada."));
+    assert.ok(html.includes("(B) 12"));
+    assert.equal((html.match(/class="linha"/g) ?? []).length, 3);
+    assert.ok(!html.includes("EF03MA07"));
+    assert.ok(!html.includes("Somando 4 cinco vezes"));
+    assert.ok(!html.includes("<img"));
+  });
+
+  it("põe a imagem na questão certa, reduzida para a folha e com a descrição escapada", () => {
+    const html = formatarProvaComoHtml(prova, { 2: imagem });
+    const [, segunda] = html.split("<strong>2.</strong>");
+    assert.ok(segunda?.includes(`<img src="${imagem.src}" alt="Caixas &quot;azuis&quot; &lt;3&gt;" width="480" height="240"`));
+    assert.equal((html.match(/<img/g) ?? []).length, 1);
+  });
+
+  it("escapa o texto da IA e recusa imagens que não sejam data URL de imagem", () => {
+    const comTag = montarProva(resposta([{ ...objetiva, enunciado: "Quanto é 2 < 3 <script>?" }]), consultadas, contexto);
+    const html = formatarProvaComoHtml(comTag, { 1: { ...imagem, src: 'javascript:alert(1)"' } });
+    assert.ok(html.includes("2 &lt; 3 &lt;script&gt;?"));
+    assert.ok(!html.includes("<img"));
   });
 });
 

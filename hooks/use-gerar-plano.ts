@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { ActionResult, FieldErrors } from "@/lib/action-result";
+import type { LlmProvider } from "@/lib/ai/providers";
 import type { PlanoGerado } from "@/lib/bncc/plano";
 import type { FormatoProva, ProvaGerada } from "@/lib/bncc/prova";
 
@@ -13,6 +14,8 @@ export interface PedidoPlano {
   componente?: string;
   anoEscolar?: string;
   bimestre?: string;
+  llm?: LlmProvider;
+  modelo?: string;
 }
 
 /** Corpo de POST /api/v1/provas. */

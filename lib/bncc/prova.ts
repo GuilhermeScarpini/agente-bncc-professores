@@ -87,6 +87,64 @@ export function formatarProvaComoTexto(prova: ProvaAvaliacao): string {
   return linhas.join("\n").trimEnd();
 }
 
+/** Imagem que o professor anexou a uma questão. Fica só no navegador, nunca vai ao servidor. */
+export interface ImagemDaQuestao {
+  /** data:image/… já reduzida no navegador. */
+  src: string;
+  largura: number;
+  altura: number;
+  /** Descrição para quem não enxerga (texto alternativo). */
+  descricao: string;
+}
+
+/** Imagens por número da questão. */
+export type ImagensDaProva = Readonly<Record<number, ImagemDaQuestao>>;
+
+/** Largura máxima da imagem na folha (px a 96 dpi, ~12,7 cm): cabe na página com margem e não toma a questão toda. */
+const LARGURA_NA_FOLHA = 480;
+
+const ENTIDADES: Record<string, string> = { "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" };
+
+function escapar(texto: string): string {
+  return texto.replace(/[&<>"']/g, (caractere) => ENTIDADES[caractere]!);
+}
+
+const comQuebras = (texto: string) => escapar(texto).replace(/\r?\n/g, "<br>");
+
+function imagemComoHtml(imagem: ImagemDaQuestao): string {
+  // Só data URLs de imagem: o HTML é colado em outros programas e impresso.
+  if (!/^data:image\/(png|jpeg|webp|gif);base64,[a-z0-9+/=]+$/i.test(imagem.src)) return "";
+  const largura = Math.min(LARGURA_NA_FOLHA, imagem.largura);
+  const altura = Math.round((imagem.altura * largura) / imagem.largura);
+  return `<p><img src="${imagem.src}" alt="${escapar(imagem.descricao)}" width="${largura}" height="${altura}" style="max-width:100%;height:auto"></p>`;
+}
+
+/**
+ * A prova para os estudantes em HTML, com as imagens anexadas: para colar num editor de texto. Mesmo conteúdo de formatarProvaComoTexto (sem gabarito, sem códigos).
+ */
+export function formatarProvaComoHtml(prova: ProvaAvaliacao, imagens: ImagensDaProva = {}): string {
+  const partes = [`<h1>${escapar(prova.titulo)}</h1>`];
+  const linhas = cabecalho(prova);
+  if (linhas.length > 0) partes.push(`<p>${linhas.map(escapar).join("<br>")}</p>`);
+  partes.push("<p>Nome: ____________________________________&nbsp;&nbsp;Data: ___/___/______</p>");
+  if (prova.instrucoes.length > 0) {
+    partes.push("<h2>Instruções</h2>", `<ul>${prova.instrucoes.map((item) => `<li>${escapar(item)}</li>`).join("")}</ul>`);
+  }
+
+  for (const questao of prova.questoes) {
+    const imagem = imagens[questao.numero];
+    const corpo = [`<p><strong>${questao.numero}.</strong> ${comQuebras(questao.enunciado)}</p>`];
+    if (imagem) corpo.push(imagemComoHtml(imagem));
+    if (questao.tipo === "multipla_escolha") {
+      corpo.push(...questao.alternativas.map((alternativa) => `<p class="alternativa">(${alternativa.letra}) ${escapar(alternativa.texto)}</p>`));
+    } else {
+      corpo.push(...Array.from({ length: 3 }, () => '<p class="linha">&nbsp;</p>'));
+    }
+    partes.push(`<div class="questao">${corpo.join("")}</div>`);
+  }
+  return partes.join("\n");
+}
+
 /** Gabarito com a habilidade de cada questão e os critérios de correção. */
 export function formatarGabaritoComoTexto(prova: ProvaAvaliacao): string {
   const linhas = [`GABARITO: ${prova.titulo}`, ...cabecalho(prova), ""];
