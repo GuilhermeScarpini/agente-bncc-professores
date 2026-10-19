@@ -20,14 +20,16 @@ export interface EscopoDoPedido {
   bimestre?: Bimestre;
 }
 
-/** O ano mais avançado entre as marcadas ("3º ano"): a turma é a desse ano, retomando os anteriores. */
-export function anoMaisAlto(marcadas: ReadonlyArray<Pick<HabilidadeMarcada, "anoEscolar" | "anoLabel">>): string | null {
+/** O ano mais avançado entre as marcadas ("ef-3", "3º ano"): a turma é a desse ano, retomando os anteriores. */
+export function anoMaisAlto(
+  marcadas: ReadonlyArray<Pick<HabilidadeMarcada, "anoEscolar" | "anoLabel">>,
+): Pick<HabilidadeMarcada, "anoEscolar" | "anoLabel"> | null {
   const numero = (item: Pick<HabilidadeMarcada, "anoEscolar">) => Number(/(\d+)$/.exec(item.anoEscolar)?.[1] ?? 0);
   const maior = marcadas.reduce<(typeof marcadas)[number] | null>(
     (atual, item) => (!atual || numero(item) > numero(atual) ? item : atual),
     null,
   );
-  return maior?.anoLabel ?? null;
+  return maior ? { anoEscolar: maior.anoEscolar, anoLabel: maior.anoLabel } : null;
 }
 
 /**

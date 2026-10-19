@@ -180,13 +180,14 @@ describe("auxiliares dos PDFs", () => {
   });
 
   it("sugere o ano mais avançado entre as habilidades marcadas", () => {
-    assert.equal(
+    assert.deepEqual(
       anoMaisAlto([
         { anoEscolar: "ef-2", anoLabel: "2º ano" },
         { anoEscolar: "ef-3", anoLabel: "3º ano" },
       ]),
-      "3º ano",
+      { anoEscolar: "ef-3", anoLabel: "3º ano" },
     );
-    assert.equal(anoMaisAlto([]), null);
+    assert.deepEqual(anoMaisAlto([]), null);
+    assert.deepEqual(anoMaisAlto([{ anoEscolar: "ef-3", anoLabel: "3º ano" }]), { anoEscolar: "ef-3", anoLabel: "3º ano" });
   });
 });

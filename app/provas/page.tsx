@@ -27,6 +27,7 @@ export default async function ProvasPage() {
     >
       <GeradorDeProvas
         endpoint="/api/demo/provas"
+        endpointBusca="/api/demo/habilidades"
         disciplinas={disciplinas}
         provedores={status.provedores}
       />

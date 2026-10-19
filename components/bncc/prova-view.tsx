@@ -10,6 +10,8 @@ import {
   ImagePlus,
   ListChecks,
   LoaderCircle,
+  Pencil,
+  Plus,
   RefreshCw,
   Trash2,
   type LucideIcon,
@@ -21,55 +23,104 @@ import { Button } from "@/components/ui/button";
 import { Field, Input } from "@/components/ui/input";
 import { useBaixarPdf } from "@/hooks/use-baixar-pdf";
 import { useCopyToClipboard } from "@/hooks/use-copy-to-clipboard";
+import type { HabilidadeMarcada } from "@/lib/bncc/escopo";
+import type { HabilidadeConsultada } from "@/lib/bncc/plano";
 import {
   AVISO_IA_PROVA,
   formatarGabaritoComoTexto,
   formatarProvaComoHtml,
   formatarProvaComoTexto,
+  questaoEmBranco,
   type ImagemDaQuestao,
-  type ImagensDaProva,
   type ProvaGerada,
   type QuestaoProva,
 } from "@/lib/bncc/prova";
 import { ImagemInvalidaError, prepararImagem } from "@/lib/imagem";
 import { nomeDeArquivo } from "@/lib/pdf/quebra";
 import { cn } from "@/lib/utils";
+import { EditorDeQuestao } from "./editor-de-questao";
+
+/** Questão na lista da tela, com um id fixo (o número muda quando o professor exclui ou adiciona). */
+interface ItemDaProva {
+  id: string;
+  questao: QuestaoProva;
+  imagem?: ImagemDaQuestao;
+}
+
+let ultimoId = 0;
+const novoId = () => `questao-${++ultimoId}`;
+const itensDa = (prova: ProvaGerada): ItemDaProva[] => prova.questoes.map((questao) => ({ id: novoId(), questao }));
 
 interface ProvaViewProps {
   prova: ProvaGerada;
-  /** Ano sugerido para o cabeçalho quando a prova não tem um ano só (habilidades de anos diferentes). */
-  anoSugerido?: string | null;
+  /** Ano mais avançado entre as habilidades do pedido: sugere o ano do cabeçalho e limita a busca de códigos. */
+  anoDaTurma?: Pick<HabilidadeMarcada, "anoEscolar" | "anoLabel"> | null;
+  /** Rota da busca de habilidades para as questões escritas à mão. */
+  endpointBusca?: string;
 }
 
 /**
- * Prova gerada, com o gabarito escondido até o professor pedir e uma imagem opcional em cada questão.
- * O título e o ano vêm sugeridos e o professor pode mudar; o cabeçalho da prova não leva bimestre.
+ * Prova gerada, com o gabarito escondido até o professor pedir. O professor muda o título e o ano
+ * (o cabeçalho não leva bimestre), edita, exclui e adiciona questões e anexa uma imagem a cada uma.
  */
-export function ProvaView({ prova, anoSugerido = null }: ProvaViewProps) {
+export function ProvaView({ prova, anoDaTurma = null, endpointBusca }: ProvaViewProps) {
+  const anoSugerido = prova.identificacao.ano ?? anoDaTurma?.anoLabel ?? "";
   const [comGabarito, setComGabarito] = useState(false);
-  const [imagens, setImagens] = useState<ImagensDaProva>({});
+  const [itens, setItens] = useState(() => itensDa(prova));
   const [titulo, setTitulo] = useState(prova.titulo);
-  const [ano, setAno] = useState(prova.identificacao.ano ?? anoSugerido ?? "");
-  // Prova nova: as imagens, o título e o ano eram da anterior.
+  const [ano, setAno] = useState(anoSugerido);
+  /** Questão aberta no editor (id) ou a nova que está sendo escrita. */
+  const [editando, setEditando] = useState<string | null>(null);
+  const [nova, setNova] = useState<string | null>(null);
+  /** Habilidades achadas na busca para as questões editadas (o texto oficial vai para o PDF). */
+  const [achadas, setAchadas] = useState<Record<string, HabilidadeConsultada>>({});
+  // Prova nova: as questões, as imagens, o título e o ano eram da anterior.
   const [provaAtual, setProvaAtual] = useState(prova);
   if (provaAtual !== prova) {
     setProvaAtual(prova);
-    setImagens({});
+    setItens(itensDa(prova));
     setTitulo(prova.titulo);
-    setAno(prova.identificacao.ano ?? anoSugerido ?? "");
+    setAno(anoSugerido);
+    setEditando(null);
+    setNova(null);
+    setAchadas({});
   }
-  const temImagens = Object.keys(imagens).length > 0;
   const { gerando, erro: erroDoPdf, baixar } = useBaixarPdf();
+  const editorAberto = editando !== null || nova !== null;
 
-  /** A prova com o título e o ano do professor, sem bimestre: é o que vai para os PDFs e as cópias. */
-  const provaFinal = useMemo(
-    () => ({
+  const conhecidas = useMemo(() => {
+    const mapa = new Map<string, HabilidadeConsultada>();
+    for (const habilidade of [...prova.consultadas, ...prova.habilidades, ...Object.values(achadas)]) {
+      mapa.set(habilidade.codigo, habilidade);
+    }
+    return mapa;
+  }, [prova, achadas]);
+
+  /**
+   * A prova como o professor deixou: título e ano dele, sem bimestre, questões renumeradas e as
+   * habilidades novas que entraram pela edição. É o que vai para os PDFs e as cópias.
+   */
+  const provaFinal = useMemo(() => {
+    const questoes = itens.map((item, indice) => ({ ...item.questao, numero: indice + 1 }));
+    const codigos = new Set(prova.habilidades.map((h) => h.codigo));
+    const novas = [...new Set(questoes.map((q) => q.habilidade))].flatMap((codigo) => {
+      const habilidade = codigo && !codigos.has(codigo) ? conhecidas.get(codigo) : undefined;
+      return habilidade ? [habilidade] : [];
+    });
+    return {
       ...prova,
       titulo: titulo.trim() || prova.titulo,
       identificacao: { ...prova.identificacao, ano: ano.trim() || null, bimestre: null },
-    }),
-    [prova, titulo, ano],
+      questoes,
+      habilidades: [...prova.habilidades, ...novas],
+    };
+  }, [prova, itens, titulo, ano, conhecidas]);
+  const imagens = useMemo(
+    () => Object.fromEntries(itens.flatMap((item, indice) => (item.imagem ? [[indice + 1, item.imagem]] : []))),
+    [itens],
   );
+  const temImagens = Object.keys(imagens).length > 0;
+  const semQuestoes = provaFinal.questoes.length === 0;
 
   function baixarPdf(versao: "alunos" | "professor") {
     void baixar(
@@ -79,20 +130,43 @@ export function ProvaView({ prova, anoSugerido = null }: ProvaViewProps) {
     );
   }
 
-  const objetivas = prova.questoes.filter((q) => q.tipo === "multipla_escolha").length;
-
-  function mudarImagem(numero: number, imagem: ImagemDaQuestao | null) {
-    setImagens((atuais) => {
-      const { [numero]: _anterior, ...resto } = atuais;
-      return imagem ? { ...resto, [numero]: imagem } : resto;
-    });
+  function mudarItem(id: string, campos: Partial<ItemDaProva>) {
+    setItens((atuais) => atuais.map((item) => (item.id === id ? { ...item, ...campos } : item)));
   }
+
+  function guardarHabilidade(habilidade: HabilidadeConsultada | null) {
+    if (habilidade && !conhecidas.has(habilidade.codigo)) setAchadas((atuais) => ({ ...atuais, [habilidade.codigo]: habilidade }));
+  }
+
+  function salvarQuestao(id: string, questao: QuestaoProva, habilidade: HabilidadeConsultada | null) {
+    guardarHabilidade(habilidade);
+    mudarItem(id, { questao });
+    setEditando(null);
+  }
+
+  function adicionarQuestao(questao: QuestaoProva, habilidade: HabilidadeConsultada | null) {
+    guardarHabilidade(habilidade);
+    setItens((atuais) => [...atuais, { id: novoId(), questao }]);
+    setNova(null);
+  }
+
+  function excluirQuestao(id: string, numero: number) {
+    if (!window.confirm(`Excluir a questão ${numero}? Não dá para desfazer.`)) return;
+    setItens((atuais) => atuais.filter((item) => item.id !== id));
+  }
+
+  const objetivas = provaFinal.questoes.filter((q) => q.tipo === "multipla_escolha").length;
+  const editorProps = {
+    endpointBusca,
+    componente: prova.identificacao.componente,
+    anoMaximo: anoDaTurma?.anoEscolar ?? null,
+  };
 
   return (
     <article className="space-y-5" aria-label="Prova gerada">
       <header className="space-y-2">
         <div className="flex flex-wrap gap-1.5">
-          {prova.habilidades.map((habilidade) => (
+          {provaFinal.habilidades.map((habilidade) => (
             <CodigoBadge key={habilidade.codigo} codigo={habilidade.codigo} />
           ))}
         </div>
@@ -123,7 +197,8 @@ export function ProvaView({ prova, anoSugerido = null }: ProvaViewProps) {
           </p>
         ) : null}
         <p className="text-sm text-muted-foreground">
-          {prova.questoes.length} questões · {objetivas} de múltipla escolha · {prova.questoes.length - objetivas} discursivas
+          {provaFinal.questoes.length} {provaFinal.questoes.length === 1 ? "questão" : "questões"} · {objetivas} de múltipla
+          escolha · {provaFinal.questoes.length - objetivas} discursivas
         </p>
         {prova.complemento ? (
           <p className="text-sm">
@@ -157,26 +232,57 @@ export function ProvaView({ prova, anoSugerido = null }: ProvaViewProps) {
       </div>
 
       <ol className="space-y-4">
-        {prova.questoes.map((questao) => (
-          <Questao
-            key={questao.numero}
-            questao={questao}
-            comGabarito={comGabarito}
-            imagem={imagens[questao.numero]}
-            onImagem={(imagem) => mudarImagem(questao.numero, imagem)}
+        {itens.map((item, indice) =>
+          item.id === editando ? (
+            <EditorDeQuestao
+              key={item.id}
+              inicial={item.questao}
+              habilidadeInicial={conhecidas.get(item.questao.habilidade) ?? null}
+              numero={indice + 1}
+              onSalvar={(questao, habilidade) => salvarQuestao(item.id, questao, habilidade)}
+              onCancelar={() => setEditando(null)}
+              {...editorProps}
+            />
+          ) : (
+            <Questao
+              key={item.id}
+              questao={{ ...item.questao, numero: indice + 1 }}
+              comGabarito={comGabarito}
+              imagem={item.imagem}
+              onImagem={(imagem) => mudarItem(item.id, { imagem: imagem ?? undefined })}
+              bloqueada={editorAberto}
+              onEditar={() => setEditando(item.id)}
+              onExcluir={() => excluirQuestao(item.id, indice + 1)}
+            />
+          ),
+        )}
+        {nova ? (
+          <EditorDeQuestao
+            key={nova}
+            inicial={questaoEmBranco()}
+            habilidadeInicial={null}
+            numero={itens.length + 1}
+            onSalvar={adicionarQuestao}
+            onCancelar={() => setNova(null)}
+            {...editorProps}
           />
-        ))}
+        ) : null}
       </ol>
 
+      <Button variant="outline" className="w-full border-dashed" onClick={() => setNova(novoId())} disabled={editorAberto}>
+        <Plus className="size-4" aria-hidden />
+        Adicionar questão
+      </Button>
+
       <details className="rounded-xl border border-border px-3 py-2 text-sm">
-        <summary className="font-semibold text-muted-foreground">Habilidades avaliadas ({prova.habilidades.length})</summary>
+        <summary className="font-semibold text-muted-foreground">Habilidades avaliadas ({provaFinal.habilidades.length})</summary>
         <ul className="mt-2 space-y-2 pb-1">
-          {prova.habilidades.map((habilidade) => (
+          {provaFinal.habilidades.map((habilidade) => (
             <li key={habilidade.codigo}>
               <span className="font-mono text-xs font-semibold">{habilidade.codigo}</span>{" "}
               <span className="text-xs text-muted-foreground">
                 ({habilidade.componente} · {habilidade.anoFaixa} ·{" "}
-                {prova.questoes.filter((q) => q.habilidade === habilidade.codigo).length} questões)
+                {provaFinal.questoes.filter((q) => q.habilidade === habilidade.codigo).length} questões)
               </span>
               <p className="text-foreground/80">{habilidade.descricao}</p>
             </li>
@@ -198,18 +304,22 @@ export function ProvaView({ prova, anoSugerido = null }: ProvaViewProps) {
             variant="outline"
             onClick={() => baixarPdf("professor")}
             loading={gerando === "professor"}
-            disabled={gerando !== null}
+            disabled={gerando !== null || semQuestoes}
           >
             {gerando === "professor" ? null : <FileDown className="size-4" aria-hidden />}
             Baixar para o professor
           </Button>
-          <Button onClick={() => baixarPdf("alunos")} loading={gerando === "alunos"} disabled={gerando !== null}>
+          <Button onClick={() => baixarPdf("alunos")} loading={gerando === "alunos"} disabled={gerando !== null || semQuestoes}>
             {gerando === "alunos" ? null : <FileDown className="size-4" aria-hidden />}
             Baixar para os alunos
           </Button>
         </div>
         <p className="text-xs text-muted-foreground sm:text-right">
-          PDF dos alunos: só as questões. PDF do professor: com o gabarito e o código BNCC de cada questão.
+          {semQuestoes
+            ? "Adicione ao menos uma questão para baixar a prova."
+            : editorAberto
+              ? "Salve a questão que está editando para ela entrar no PDF."
+              : "PDF dos alunos: só as questões. PDF do professor: com o gabarito e o código BNCC de cada questão."}
         </p>
         {erroDoPdf ? <Alert variant="error">{erroDoPdf}</Alert> : null}
         <div className="flex flex-wrap gap-1 sm:justify-end">
@@ -231,18 +341,42 @@ interface QuestaoProps {
   comGabarito: boolean;
   imagem: ImagemDaQuestao | undefined;
   onImagem: (imagem: ImagemDaQuestao | null) => void;
+  /** Outra questão está aberta no editor. */
+  bloqueada: boolean;
+  onEditar: () => void;
+  onExcluir: () => void;
 }
 
-function Questao({ questao, comGabarito, imagem, onImagem }: QuestaoProps) {
+function Questao({ questao, comGabarito, imagem, onImagem, bloqueada, onEditar, onExcluir }: QuestaoProps) {
   return (
     <li className="space-y-2 rounded-xl border border-border p-3">
       <div className="flex flex-wrap items-center gap-2">
         <span className="flex size-6 shrink-0 items-center justify-center rounded-full bg-primary-soft text-xs font-bold text-primary">
           {questao.numero}
         </span>
-        <CodigoBadge codigo={questao.habilidade} />
+        {questao.habilidade ? (
+          <CodigoBadge codigo={questao.habilidade} />
+        ) : (
+          <span className="text-xs text-muted-foreground">Sem código BNCC</span>
+        )}
         <span className="text-xs font-semibold text-muted-foreground">
           {questao.tipo === "multipla_escolha" ? "Múltipla escolha" : "Discursiva"}
+        </span>
+        <span className="ml-auto flex gap-0.5">
+          <Button variant="ghost" size="sm" onClick={onEditar} disabled={bloqueada} aria-label={`Editar a questão ${questao.numero}`}>
+            <Pencil className="size-4" aria-hidden />
+            <span className="hidden sm:inline">Editar</span>
+          </Button>
+          <Button
+            variant="destructive-ghost"
+            size="sm"
+            onClick={onExcluir}
+            disabled={bloqueada}
+            aria-label={`Excluir a questão ${questao.numero}`}
+          >
+            <Trash2 className="size-4" aria-hidden />
+            <span className="hidden sm:inline">Excluir</span>
+          </Button>
         </span>
       </div>
       <p className="whitespace-pre-line text-sm leading-relaxed">{questao.enunciado}</p>

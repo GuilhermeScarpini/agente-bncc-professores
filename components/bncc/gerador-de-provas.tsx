@@ -34,18 +34,20 @@ const ETAPAS_DO_CARREGAMENTO = [
  */
 interface GeradorDeProvasProps {
   endpoint: string;
+  /** Rota da busca de habilidades para as questões que o professor escreve à mão. */
+  endpointBusca?: string;
   disciplinas: DisciplinaComHabilidades[];
   provedores: ProvedoresDaIa;
 }
 
-export function GeradorDeProvas({ endpoint, disciplinas, provedores }: GeradorDeProvasProps) {
+export function GeradorDeProvas({ endpoint, endpointBusca, disciplinas, provedores }: GeradorDeProvasProps) {
   const selecao = useSelecaoBncc(disciplinas);
   const escolhaIa = useEscolhaIa(provedores);
   const [quantidade, setQuantidade] = useState<number>(QUESTOES.padrao);
   const [formato, setFormato] = useState<FormatoProva>("mista");
   const [complemento, setComplemento] = useState("");
-  // Ano sugerido para o cabeçalho, guardado no pedido: o maior entre as marcadas (turma que retoma anos anteriores).
-  const [anoSugerido, setAnoSugerido] = useState<string | null>(null);
+  // Ano da turma, guardado no pedido: o maior entre as marcadas (turma que retoma anos anteriores).
+  const [anoDaTurma, setAnoDaTurma] = useState<ReturnType<typeof anoMaisAlto>>(null);
   const { prova, pending, error, fieldErrors, gerar, cancelar } = useGerarProva(endpoint);
   const resultadoRef = useRef<HTMLDivElement>(null);
   const { pedido } = selecao;
@@ -57,7 +59,7 @@ export function GeradorDeProvas({ endpoint, disciplinas, provedores }: GeradorDe
   function handleSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     if (pending || !pedido) return;
-    setAnoSugerido(anoMaisAlto(selecao.selecionadas));
+    setAnoDaTurma(anoMaisAlto(selecao.selecionadas));
     void gerar({ ...pedido, ...escolhaIa.pedido, complemento, quantidade, formato });
   }
 
@@ -132,7 +134,7 @@ export function GeradorDeProvas({ endpoint, disciplinas, provedores }: GeradorDe
           <CarregandoGeracao etapas={ETAPAS_DO_CARREGAMENTO} />
         ) : prova ? (
           <div className="border-t border-border pt-5">
-            <ProvaView prova={prova} anoSugerido={anoSugerido} />
+            <ProvaView prova={prova} anoDaTurma={anoDaTurma} endpointBusca={endpointBusca} />
           </div>
         ) : null}
       </div>

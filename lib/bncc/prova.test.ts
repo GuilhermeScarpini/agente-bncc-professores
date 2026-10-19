@@ -3,7 +3,13 @@ import { describe, it } from "node:test";
 import { gerarProvaSchema } from "../validation";
 import type { HabilidadeConsultada } from "./plano";
 import { ProvaSemQuestoesError, montarPromptProva, montarProva, respostaProvaSchema, schemaRespostaProva } from "./prompt-prova";
-import { formatarGabaritoComoTexto, formatarProvaComoHtml, formatarProvaComoTexto } from "./prova";
+import {
+  formatarGabaritoComoTexto,
+  formatarProvaComoHtml,
+  formatarProvaComoTexto,
+  problemaDaQuestao,
+  questaoEmBranco,
+} from "./prova";
 
 const habilidade = (codigo: string, descricao: string): HabilidadeConsultada => ({
   codigo,
@@ -186,6 +192,37 @@ describe("formatarProvaComoHtml", () => {
     const html = formatarProvaComoHtml(comTag, { 1: { ...imagem, src: 'javascript:alert(1)"' } });
     assert.ok(html.includes("2 &lt; 3 &lt;script&gt;?"));
     assert.ok(!html.includes("<img"));
+  });
+});
+
+describe("questões editadas pelo professor", () => {
+  const prova = montarProva(resposta([objetiva, discursiva]), consultadas, contexto);
+  const [primeira, segunda] = prova.questoes;
+
+  it("a questão em branco é de múltipla escolha, com 4 alternativas vazias e sem código", () => {
+    const nova = questaoEmBranco();
+    assert.equal(nova.tipo, "multipla_escolha");
+    assert.deepEqual(
+      nova.alternativas.map((a) => a.letra),
+      ["A", "B", "C", "D"],
+    );
+    assert.equal(nova.habilidade, "");
+    assert.equal(problemaDaQuestao(nova), "Escreva o enunciado da questão.");
+  });
+
+  it("exige as 4 alternativas e a correta marcada, ou a resposta esperada nas discursivas", () => {
+    assert.equal(problemaDaQuestao(primeira!), null);
+    assert.equal(problemaDaQuestao(segunda!), null);
+    const semAlternativa = { ...primeira!, alternativas: primeira!.alternativas.map((a, i) => (i === 2 ? { ...a, texto: " " } : a)) };
+    assert.match(problemaDaQuestao(semAlternativa) ?? "", /quatro alternativas/);
+    assert.match(problemaDaQuestao({ ...primeira!, resposta: "" }) ?? "", /correta/);
+    assert.match(problemaDaQuestao({ ...segunda!, resposta: "  " }) ?? "", /resposta esperada/);
+  });
+
+  it("o gabarito de uma questão sem código BNCC não mostra colchetes vazios", () => {
+    const gabarito = formatarGabaritoComoTexto({ ...prova, questoes: [{ ...primeira!, habilidade: "" }] });
+    assert.ok(gabarito.includes("1. (B)"));
+    assert.ok(!gabarito.includes("[]"));
   });
 });
 

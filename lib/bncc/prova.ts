@@ -22,7 +22,7 @@ export interface Alternativa {
 
 export interface QuestaoProva {
   numero: number;
-  /** Código BNCC (da base) que a questão avalia. */
+  /** Código BNCC (da base) que a questão avalia; vazio numa questão escrita à mão sem código. */
   habilidade: string;
   /** O que a questão avalia em poucas palavras ("Multiplicação por 2, 3, 4 e 5"), para agrupar relatórios. */
   topico: string;
@@ -59,6 +59,34 @@ export interface ProvaGerada extends ProvaAvaliacao {
   textoGabarito: string;
   /** A IA e o modelo que geraram (ex.: deepseek / deepseek-flash). */
   ia: { provedor: string; modelo: string; tokens: { entrada: number; saida: number } };
+}
+
+/** Questão em branco para "Adicionar questão". */
+export function questaoEmBranco(): QuestaoProva {
+  return {
+    numero: 0,
+    habilidade: "",
+    topico: "",
+    tipo: "multipla_escolha",
+    enunciado: "",
+    alternativas: LETRAS.map((letra) => ({ letra, texto: "" })),
+    resposta: "",
+    criterios: "",
+  };
+}
+
+/** O que falta para a questão ficar completa (null quando está pronta para salvar). */
+export function problemaDaQuestao(questao: QuestaoProva): string | null {
+  if (!questao.enunciado.trim()) return "Escreva o enunciado da questão.";
+  if (questao.tipo === "multipla_escolha") {
+    if (questao.alternativas.length !== LETRAS.length || questao.alternativas.some((a) => !a.texto.trim())) {
+      return "Preencha as quatro alternativas (A a D).";
+    }
+    if (!(LETRAS as readonly string[]).includes(questao.resposta)) return "Marque qual alternativa é a correta.";
+  } else if (!questao.resposta.trim()) {
+    return "Escreva a resposta esperada: ela vai no gabarito do professor.";
+  }
+  return null;
 }
 
 export const AVISO_IA_PROVA = "Prova gerada com apoio de IA a partir da BNCC. Revise as questões e o gabarito antes de aplicar.";
@@ -150,7 +178,8 @@ export function formatarGabaritoComoTexto(prova: ProvaAvaliacao): string {
   const linhas = [`GABARITO: ${prova.titulo}`, ...cabecalho(prova), ""];
   for (const questao of prova.questoes) {
     const resposta = questao.tipo === "multipla_escolha" ? `(${questao.resposta})` : questao.resposta;
-    linhas.push(`${questao.numero}. [${questao.habilidade}] ${resposta}`);
+    // Questão escrita à mão pode ficar sem código BNCC.
+    linhas.push(`${questao.numero}. ${questao.habilidade ? `[${questao.habilidade}] ` : ""}${resposta}`);
     if (questao.criterios) linhas.push(`   Critérios: ${questao.criterios}`);
   }
   linhas.push("", "HABILIDADES AVALIADAS");
