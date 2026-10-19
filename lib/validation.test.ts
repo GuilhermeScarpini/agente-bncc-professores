@@ -55,3 +55,22 @@ describe("gerarPlanoSchema", () => {
     assert.match(erros({ habilidades: ["EF03MA07"], bimestre: 5 })[0]!, /bimestre/);
   });
 });
+
+describe("escolha da IA no pedido", () => {
+  const base = { habilidades: ["EF03MA07"], componente: "Matemática", anoEscolar: "ef-3" };
+
+  it("aceita llm e modelo, e deixa os dois de fora quando vazios", () => {
+    const parsed = gerarPlanoSchema.safeParse({ ...base, llm: "deepseek", modelo: "deepseek-v4-pro" });
+    assert.equal(parsed.success, true);
+    assert.equal(parsed.data?.llm, "deepseek");
+    assert.equal(parsed.data?.modelo, "deepseek-v4-pro");
+    const empty = gerarPlanoSchema.safeParse({ ...base, llm: "", modelo: " " });
+    assert.equal(empty.data?.llm, undefined);
+    assert.equal(empty.data?.modelo, undefined);
+  });
+
+  it("recusa IA desconhecida e nome de modelo estranho", () => {
+    assert.equal(gerarPlanoSchema.safeParse({ ...base, llm: "outra" }).success, false);
+    assert.equal(gerarPlanoSchema.safeParse({ ...base, modelo: "../../etc" }).success, false);
+  });
+});

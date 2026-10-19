@@ -73,6 +73,8 @@ curl -X POST http://localhost:3200/api/v1/planos \
 | Campo        | Obrigatório | Descrição                                                     |
 | ------------ | ----------- | ------------------------------------------------------------- |
 | `tema`        | sim, sem `habilidades` | O que trabalhar na aula (3 a 500 caracteres)       |
+| `llm`         | não         | IA que gera: `"gemini"` ou `"deepseek"`. Sem ele, vale `LLM_PROVIDER` |
+| `modelo`      | não         | Modelo da IA (ex.: `"deepseek-v4-pro"`). Sem ele, o padrão da IA escolhida |
 | `habilidades` | sim, sem `tema` | Lista de 1 a 5 códigos BNCC escolhidos (ex.: `["EF03MA07", "EF03MA08"]`): o plano usa todos, sem busca semântica |
 | `complemento` | não         | Orientações do professor: turma, tempo, recursos, adaptações (até 500 caracteres) |
 | `componente`  | não         | Disciplina, exatamente como em `GET /api/v1/catalogo`         |
@@ -99,16 +101,17 @@ A resposta (`data`) traz:
 | 401    | Chave de API ausente ou errada                                            |
 | 415    | O corpo não foi enviado como JSON                                         |
 | 422    | Nenhuma habilidade para os filtros, ou o tema não pôde ser ancorado       |
-| 429    | Limite atingido: 30 planos a cada 10 minutos, ou cota do Gemini (veja `Retry-After`) |
-| 502    | O Gemini devolveu uma resposta fora do formato                            |
-| 503    | Agente sem `GEMINI_API_KEY`, BNCC não carregada ou Gemini fora do ar       |
-| 504    | O Gemini demorou demais                                                   |
+| 402    | Os créditos da IA acabaram (saldo do DeepSeek)                             |
+| 429    | Limite atingido: 30 planos a cada 10 minutos, ou cota da IA (veja `Retry-After`) |
+| 502    | A IA devolveu uma resposta fora do formato                                 |
+| 503    | IA sem chave (`GEMINI_API_KEY` / `DEEPSEEK_API_KEY`), BNCC não carregada ou IA fora do ar |
+| 504    | A IA demorou demais                                                        |
 
-A geração leva cerca de 5 segundos (mais, se o Gemini estiver sobrecarregado). Se o cliente cancelar a requisição, o agente também interrompe a chamada ao Gemini.
+A geração leva cerca de 5 segundos com o Gemini e uns 10–15 com o DeepSeek Flash (mais, se a IA estiver sobrecarregada). Se o cliente cancelar a requisição, o agente também interrompe a chamada à IA. A resposta traz `ia: { provedor, modelo }`, com a IA que gerou.
 
 ### `POST /api/v1/provas`
 
-Gera uma prova com gabarito. Exige o mesmo cabeçalho `Authorization` e aceita os mesmos campos do plano (`tema` ou `habilidades`, `complemento`, `componente`, `anoEscolar`, `bimestre`), mais:
+Gera uma prova com gabarito. Exige o mesmo cabeçalho `Authorization` e aceita os mesmos campos do plano (`tema` ou `habilidades`, `complemento`, `componente`, `anoEscolar`, `bimestre`, `llm`, `modelo`), mais:
 
 | Campo        | Obrigatório | Descrição                                                         |
 | ------------ | ----------- | ----------------------------------------------------------------- |
@@ -140,7 +143,7 @@ Os mesmos menus das páginas: `disciplinas` → `anos` → `bimestres` → `habi
 
 ### `GET /api/v1/status`
 
-Diz se o agente está pronto (`pronto`, `configurado`, `habilidades`, modelos). É pública e serve de health check.
+Diz se o agente está pronto (`pronto`, `configurado`, `habilidades`), qual IA gera por padrão (`provedorGeracao`, `modeloGeracao`), quais IAs têm chave (`provedores`) e se a busca por tema está ligada (`buscaPorTema`, que precisa do Gemini). É pública e serve de health check.
 
 ## Como um sistema cliente se conecta
 
@@ -157,8 +160,9 @@ No turma-social, uma prova `formato: "objetivas"` vira o rascunho da "Nova avali
 - **Bimestres:** a BNCC define as habilidades por ano, não por bimestre. A distribuição usada nos menus fica em `prisma/data/bncc-bimestres.json` (disciplina → ano → bimestre → códigos). O arquivo vem com uma **sugestão** para as 8 disciplinas do 1º ao 5º ano (Língua Inglesa só começa no 6º): Matemática foi distribuída à mão em progressão espiral; as demais, em 4 blocos seguidos na ordem dos códigos, com as habilidades de faixa (ex.: EF15AR, EF35LP) em todos os anos que cobrem. Edite-o para seguir o currículo da sua rede: um ano ou disciplina sem códigos aparece como "em breve", e códigos de outra disciplina ou de outro ano são recusados com uma mensagem que diz qual linha corrigir.
 - **Outra fonte:** `npm run db:seed-bncc -- --arquivo habilidades.csv` aceita CSV (separado por `;`, `,` ou tab) ou JSON, com as colunas `id` (ou `codigo`) e `descricao`, e, opcionalmente, `unidade_tematica` e `objeto_conhecimento`. Use `-- --forcar` para recalcular todos os embeddings.
 - **Busca:** os embeddings (768 dimensões) ficam na tabela `bncc_habilidades` do SQLite. A comparação com o tema é feita em memória: são cerca de 1.600 vetores, o que leva poucos milissegundos e dá um resultado exato.
-- **Geração:** para trocar o modelo, defina `GEMINI_MODEL` no `.env`; `GEMINI_THINKING_LEVEL` (`low`, `medium` ou `high`) controla quanto os modelos Gemini 3+ raciocinam antes de responder. Medido em outubro de 2026, com o mesmo pedido: `gemini-3.5-flash` + `low` levou 4–5 s; `gemini-3.8-flash`, 18–24 s; os modelos `-lite`, ~3 s, mas escrevendo sem acentos. O `text-embedding-004` não é usado porque o Google o desligou em janeiro de 2026.
-- **Privacidade:** o tema é enviado à API do Google, e no plano gratuito o Google pode usar esse conteúdo para melhorar os produtos dele. Não envie nomes nem dados de alunos no tema.
+- **Qual IA gera:** Gemini ou DeepSeek. `LLM_PROVIDER` (`gemini`, o padrão, ou `deepseek`) define a IA de sempre, e cada pedido pode escolher outra com `llm` e `modelo`. O DeepSeek é pré-pago (`DEEPSEEK_API_KEY`, em https://platform.deepseek.com) e não tem cota diária como o plano gratuito do Gemini; os modelos são `deepseek-flash` (padrão, ~13 s para 5 questões) e `deepseek-v4-pro` (~37 s, explicações mais detalhadas). `DEEPSEEK_EFFORT` (`low`, o padrão, `high` ou `max`) controla quanto ele raciocina. O DeepSeek não aceita o "formato obrigatório" do Gemini: o JSON Schema vai nas instruções, e a resposta passa pela mesma conferência. A **busca por tema** usa os embeddings do Gemini (o DeepSeek não tem); pedidos com `habilidades` escolhidas não precisam dela.
+- **Geração (Gemini):** para trocar o modelo, defina `GEMINI_MODEL` no `.env`; `GEMINI_THINKING_LEVEL` (`low`, `medium` ou `high`) controla quanto os modelos Gemini 3+ raciocinam antes de responder. Medido em outubro de 2026, com o mesmo pedido: `gemini-3.5-flash` + `low` levou 4–5 s; `gemini-3.8-flash`, 18–24 s; os modelos `-lite`, ~3 s, mas escrevendo sem acentos. O `text-embedding-004` não é usado porque o Google o desligou em janeiro de 2026.
+- **Privacidade:** o tema é enviado à API do Google (e, com o DeepSeek, aos servidores dele, na China), e no plano gratuito o Google pode usar esse conteúdo para melhorar os produtos dele. Não envie nomes nem dados de alunos no tema nem no complemento.
 
 ## Estrutura
 
@@ -179,7 +183,8 @@ O agente roda no plano gratuito (Hobby) da Vercel. O servidor só **lê** a base
 1. Rode o seed no seu computador até o fim (`npm run db:seed-bncc` mostra "Pronto!") e faça commit do `bncc.db`. Repita sempre que mudar `prisma/data/bncc-habilidades.json`.
 2. Na Vercel: **Add New → Project**, escolha este repositório. O framework (Next.js) e os comandos são detectados sozinhos.
 3. Em **Settings → Environment Variables**, cadastre:
-   - `GEMINI_API_KEY`: a chave do Gemini;
+   - `GEMINI_API_KEY`: a chave do Gemini (embeddings da busca por tema e, se for a IA escolhida, a geração);
+   - `DEEPSEEK_API_KEY` e `LLM_PROVIDER="deepseek"`: para gerar com o DeepSeek (opcional);
    - `AGENTE_BNCC_API_KEY`: uma chave longa e aleatória (ex.: `openssl rand -base64 32`), a mesma que o turma-social vai usar;
    - `ACESSO_SENHA`: a senha das páginas de planos e provas.
 

@@ -2,6 +2,7 @@ import { z } from "zod";
 import { BIMESTRES } from "./bncc/bimestres";
 import { ANOS_ESCOLARES_VALORES, COMPONENTES, findAnoEscolar, parseCodigoBncc } from "./bncc/codigos";
 import { FORMATOS_PROVA, QUESTOES } from "./bncc/prova";
+import { LLM_PROVIDERS } from "./ai/providers";
 import { LIMITS } from "./limits";
 
 /** Campo de escolha opcional: vazio vira undefined. */
@@ -44,6 +45,15 @@ const pedidoBase = z.object({
   bimestre: z.preprocess(
     (value) => (typeof value === "number" ? String(value) : value),
     optionalChoice(BIMESTRES, "Escolha um bimestre de 1 a 4."),
+  ),
+  /** Qual IA gera: "gemini" ou "deepseek". Sem ele, vale LLM_PROVIDER do .env. */
+  llm: optionalChoice(LLM_PROVIDERS, "Escolha a IA: gemini ou deepseek."),
+  /** Modelo da IA (ex.: "deepseek-v4-pro"). Sem ele, o padrão da IA escolhida. */
+  modelo: optionalText(
+    z
+      .string("O modelo precisa ser um texto.")
+      .trim()
+      .regex(/^[a-z0-9][a-z0-9.-]{1,59}$/, "Nome de modelo inválido (ex.: deepseek-flash, gemini-3.5-flash)."),
   ),
 });
 

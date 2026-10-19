@@ -1,13 +1,7 @@
 import "server-only";
 import { prisma } from "@/lib/db";
-import {
-  EMBEDDING_KEY_PREFIX,
-  formatEmbeddingQuery,
-  gemini,
-  getGenerationModel,
-  getThinkingLevel,
-  type GeminiRequestOptions,
-} from "@/lib/ai/gemini";
+import { EMBEDDING_KEY_PREFIX, formatEmbeddingQuery, gemini, type GeminiRequestOptions } from "@/lib/ai/gemini";
+import { generateJson, resolveLlm, type LlmProvider, type LlmUsage } from "@/lib/ai/llm";
 import { rotuloBimestre, type Bimestre } from "./bimestres";
 import { findAnoEscolar } from "./codigos";
 import { formatarPlanoComoTexto, type HabilidadeConsultada, type PlanoGerado } from "./plano";
@@ -46,6 +40,9 @@ export interface PedidoPlano {
   componente?: string;
   anoEscolar?: string;
   bimestre?: Bimestre;
+  /** IA que gera (sem ela, LLM_PROVIDER do .env) e o modelo (sem ele, o padrão da IA). */
+  llm?: LlmProvider;
+  modelo?: string;
 }
 
 export interface PedidoProva extends PedidoPlano {
@@ -132,15 +129,14 @@ async function prepararGeracao(pedido: PedidoPlano, signal: AbortSignal | undefi
     : await buscarHabilidades({ ...pedido, tema: pedido.tema ?? "" }, { signal, timeoutMs: 20_000 });
   const ano = findAnoEscolar(pedido.anoEscolar)?.label;
   const bimestre = pedido.bimestre ? rotuloBimestre(pedido.bimestre) : undefined;
-  const model = getGenerationModel();
+  const llm = resolveLlm({ llm: pedido.llm, modelo: pedido.modelo });
   return {
     escolhidas,
     consultadas,
     tema: escolhidas ? consultadas.map((habilidade) => habilidade.descricao).join(" ") : (pedido.tema ?? ""),
     ano,
     bimestre,
-    model,
-    thinkingLevel: getThinkingLevel(model),
+    llm,
     contexto: {
       origem: escolhidas ? ("habilidade_escolhida" as const) : ("busca_semantica" as const),
       identificacao: {
@@ -153,17 +149,26 @@ async function prepararGeracao(pedido: PedidoPlano, signal: AbortSignal | undefi
   };
 }
 
+/** Soma os tokens de todas as chamadas de uma geração (o cliente pode repetir a chamada). */
+function usageCounter() {
+  const total: LlmUsage = { entrada: 0, saida: 0 };
+  return {
+    total,
+    add: (usage: LlmUsage) => {
+      total.entrada += usage.entrada;
+      total.saida += usage.saida;
+    },
+  };
+}
+
 /** Recupera as habilidades oficiais e gera um plano de aula ancorado nelas. */
 async function gerarPlano(pedido: PedidoPlano, options: { signal?: AbortSignal } = {}): Promise<PlanoGerado> {
-  const { escolhidas, consultadas, tema, ano, bimestre, model, thinkingLevel, contexto } = await prepararGeracao(
-    pedido,
-    options.signal,
-  );
+  const { escolhidas, consultadas, tema, ano, bimestre, llm, contexto } = await prepararGeracao(pedido, options.signal);
 
-  const resposta = await gemini.generateJson(
+  const usage = usageCounter();
+  const resposta = await generateJson(
+    llm,
     {
-      model,
-      thinkingLevel,
       systemInstruction: SYSTEM_PROMPT,
       prompt: montarPromptUsuario({
         tema: escolhidas ? undefined : tema,
@@ -178,7 +183,7 @@ async function gerarPlano(pedido: PedidoPlano, options: { signal?: AbortSignal }
         { todas: escolhidas },
       ),
     },
-    { signal: options.signal, timeoutMs: 75_000, maxRetryWaitMs: 5_000 },
+    { signal: options.signal, timeoutMs: 75_000, maxRetryWaitMs: 5_000, onUsage: usage.add },
   );
 
   const parsed = respostaPlanoSchema.safeParse(resposta);
@@ -186,20 +191,17 @@ async function gerarPlano(pedido: PedidoPlano, options: { signal?: AbortSignal }
     throw new BnccAgentError("resposta_invalida", `Resposta fora do formato: ${parsed.error.issues[0]?.message}`);
   }
   const plano = montarPlano(tema, parsed.data, consultadas, contexto);
-  return { ...plano, texto: formatarPlanoComoTexto(plano) };
+  return { ...plano, texto: formatarPlanoComoTexto(plano), ia: { provedor: llm.provider, modelo: llm.model, tokens: usage.total } };
 }
 
 /** Recupera as habilidades oficiais e gera uma prova com gabarito ancorada nelas. */
 async function gerarProva(pedido: PedidoProva, options: { signal?: AbortSignal } = {}): Promise<ProvaGerada> {
-  const { escolhidas, consultadas, tema, ano, bimestre, model, thinkingLevel, contexto } = await prepararGeracao(
-    pedido,
-    options.signal,
-  );
+  const { escolhidas, consultadas, tema, ano, bimestre, llm, contexto } = await prepararGeracao(pedido, options.signal);
 
-  const resposta = await gemini.generateJson(
+  const usage = usageCounter();
+  const resposta = await generateJson(
+    llm,
     {
-      model,
-      thinkingLevel,
       systemInstruction: SYSTEM_PROMPT_PROVA,
       prompt: montarPromptProva({
         tema: escolhidas ? undefined : tema,
@@ -218,7 +220,7 @@ async function gerarProva(pedido: PedidoProva, options: { signal?: AbortSignal }
       // 20 questões com alternativas e critérios passam de 8 mil tokens.
       maxOutputTokens: 16_384,
     },
-    { signal: options.signal, timeoutMs: 90_000, maxRetryWaitMs: 5_000 },
+    { signal: options.signal, timeoutMs: 90_000, maxRetryWaitMs: 5_000, onUsage: usage.add },
   );
 
   const parsed = respostaProvaSchema.safeParse(resposta);
@@ -226,7 +228,12 @@ async function gerarProva(pedido: PedidoProva, options: { signal?: AbortSignal }
     throw new BnccAgentError("resposta_invalida", `Resposta fora do formato: ${parsed.error.issues[0]?.message}`);
   }
   const prova = montarProva(parsed.data, consultadas, { ...contexto, tema });
-  return { ...prova, textoProva: formatarProvaComoTexto(prova), textoGabarito: formatarGabaritoComoTexto(prova) };
+  return {
+    ...prova,
+    textoProva: formatarProvaComoTexto(prova),
+    textoGabarito: formatarGabaritoComoTexto(prova),
+    ia: { provedor: llm.provider, modelo: llm.model, tokens: usage.total },
+  };
 }
 
 export const bnccAgentService = { buscarHabilidades, buscarHabilidadesPorCodigo, gerarPlano, gerarProva };

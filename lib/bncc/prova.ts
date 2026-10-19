@@ -57,6 +57,8 @@ export interface ProvaGerada extends ProvaAvaliacao {
   textoProva: string;
   /** Gabarito e critérios de correção, para o professor. */
   textoGabarito: string;
+  /** A IA e o modelo que geraram (ex.: deepseek / deepseek-flash). */
+  ia: { provedor: string; modelo: string; tokens: { entrada: number; saida: number } };
 }
 
 export const AVISO_IA_PROVA = "Prova gerada com apoio de IA a partir da BNCC. Revise as questões e o gabarito antes de aplicar.";

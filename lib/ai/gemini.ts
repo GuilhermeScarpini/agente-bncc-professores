@@ -2,7 +2,11 @@
 // tentativas em falhas temporárias e erros tipados — sem SDK.
 // Sem "server-only" de propósito: o seed da BNCC (tsx) também usa. A chave vem de
 // GEMINI_API_KEY, que nunca chega ao navegador (não tem o prefixo NEXT_PUBLIC_).
+// Os embeddings (busca por tema) são sempre do Gemini; a geração pode ser do Gemini ou do
+// DeepSeek (ver llm.ts).
 import { normalize } from "../bncc/vetores";
+import { LlmError, abortableSleep, backoffMs } from "./llm-error";
+import type { LlmUsage } from "./providers";
 
 /** text-embedding-004 foi desligado em 14/01/2026; este é o substituto indicado pelo Google. */
 export const GEMINI_EMBEDDING_MODEL = "gemini-embedding-2";
@@ -23,28 +27,8 @@ const EMBED_BATCH_LIMIT = 100;
 const RETRYABLE_STATUS = new Set([429, 500, 502, 503, 504]);
 const BLOCKED_FINISH_REASONS = new Set(["SAFETY", "BLOCKLIST", "PROHIBITED_CONTENT", "SPII", "RECITATION"]);
 
-export type GeminiErrorKind =
-  | "config" // chave ausente/inválida ou modelo inexistente
-  | "rate_limit" // cota do plano gratuito esgotada (429)
-  | "timeout"
-  | "unavailable" // rede ou servidor do Google fora do ar
-  | "blocked" // filtros de segurança do Gemini
-  | "invalid_response"
-  | "bad_request"
-  | "aborted"; // cancelado por quem chamou
-
-export class GeminiError extends Error {
-  constructor(
-    readonly kind: GeminiErrorKind,
-    message: string,
-    /** Quanto esperar antes de tentar de novo, quando o Google informa (429). */
-    readonly retryAfterMs?: number,
-    options?: ErrorOptions,
-  ) {
-    super(message, options);
-    this.name = "GeminiError";
-  }
-}
+// O erro é o mesmo das outras IAs; os nomes antigos continuam valendo (seed, testes).
+export { LlmError as GeminiError, type LlmErrorKind as GeminiErrorKind } from "./llm-error";
 
 export interface GeminiRequestOptions {
   /** Cancelamento externo (ex.: o professor fechou a janela ou a conexão caiu). */
@@ -54,6 +38,8 @@ export interface GeminiRequestOptions {
   maxRetries?: number;
   /** Se o Google pedir para esperar mais que isto, desiste na hora e devolve rate_limit. */
   maxRetryWaitMs?: number;
+  /** Recebe os tokens gastos (para quem quer somar o consumo). */
+  onUsage?: (usage: LlmUsage) => void;
 }
 
 export interface GenerateJsonParams {
@@ -78,10 +64,6 @@ export function isGeminiConfigured(): boolean {
   return Boolean(process.env.GEMINI_API_KEY?.trim());
 }
 
-export function getGenerationModel(): string {
-  return process.env.GEMINI_MODEL?.trim() || DEFAULT_GEMINI_MODEL;
-}
-
 /**
  * Quanto o modelo raciocina antes de responder (GEMINI_THINKING_LEVEL). Só os modelos
  * Gemini 3 em diante aceitam thinkingLevel; para os outros não enviamos nada.
@@ -100,21 +82,6 @@ export function formatEmbeddingQuery(query: string): string {
 
 export function formatEmbeddingDocument(title: string | null | undefined, text: string): string {
   return `title: ${title?.trim() || "none"} | text: ${text}`;
-}
-
-function abortableSleep(ms: number, signal?: AbortSignal): Promise<void> {
-  return new Promise((resolve, reject) => {
-    if (signal?.aborted) return reject(signal.reason);
-    const timer = setTimeout(() => {
-      signal?.removeEventListener("abort", onAbort);
-      resolve();
-    }, ms);
-    function onAbort() {
-      clearTimeout(timer);
-      reject(signal?.reason);
-    }
-    signal?.addEventListener("abort", onAbort, { once: true });
-  });
 }
 
 interface ApiErrorInfo {
@@ -145,15 +112,15 @@ async function readApiError(response: Response): Promise<ApiErrorInfo> {
   }
 }
 
-function toGeminiError(status: number, info: ApiErrorInfo, model: string): GeminiError {
-  if (status === 429) return new GeminiError("rate_limit", `Cota do Gemini esgotada: ${info.message}`, info.retryDelayMs);
+function toGeminiError(status: number, info: ApiErrorInfo, model: string): LlmError {
+  if (status === 429) return new LlmError("rate_limit", `Cota do Gemini esgotada: ${info.message}`, info.retryDelayMs);
   if (status === 400 && (info.reason === "API_KEY_INVALID" || /api key/i.test(info.message))) {
-    return new GeminiError("config", "GEMINI_API_KEY inválida.");
+    return new LlmError("config", "GEMINI_API_KEY inválida.");
   }
-  if (status === 401 || status === 403) return new GeminiError("config", `Acesso negado pelo Gemini: ${info.message}`);
-  if (status === 404) return new GeminiError("config", `Modelo "${model}" não encontrado na API do Gemini.`);
-  if (status === 400) return new GeminiError("bad_request", `O Gemini recusou a requisição: ${info.message}`);
-  return new GeminiError("unavailable", `Gemini indisponível (${status}): ${info.message}`);
+  if (status === 401 || status === 403) return new LlmError("config", `Acesso negado pelo Gemini: ${info.message}`);
+  if (status === 404) return new LlmError("config", `Modelo "${model}" não encontrado na API do Gemini.`);
+  if (status === 400) return new LlmError("bad_request", `O Gemini recusou a requisição: ${info.message}`);
+  return new LlmError("unavailable", `Gemini indisponível (${status}): ${info.message}`);
 }
 
 export function createGeminiClient(config: GeminiClientConfig = {}) {
@@ -162,7 +129,7 @@ export function createGeminiClient(config: GeminiClientConfig = {}) {
 
   async function post(model: string, method: string, body: unknown, options: GeminiRequestOptions): Promise<unknown> {
     const apiKey = config.apiKey ?? process.env.GEMINI_API_KEY?.trim();
-    if (!apiKey) throw new GeminiError("config", "GEMINI_API_KEY não está definida no .env.");
+    if (!apiKey) throw new LlmError("config", "GEMINI_API_KEY não está definida no .env.");
 
     const { signal, timeoutMs = 60_000, maxRetries = 2, maxRetryWaitMs = 10_000 } = options;
 
@@ -177,15 +144,15 @@ export function createGeminiClient(config: GeminiClientConfig = {}) {
           signal: signal ? AbortSignal.any([signal, timeout]) : timeout,
         });
       } catch (error) {
-        if (signal?.aborted) throw new GeminiError("aborted", "Requisição cancelada.", undefined, { cause: error });
+        if (signal?.aborted) throw new LlmError("aborted", "Requisição cancelada.", undefined, { cause: error });
         // Timeout não é repetido: quem está esperando já esperou o bastante.
         if (timeout.aborted) {
-          throw new GeminiError("timeout", `O Gemini não respondeu em ${timeoutMs / 1000} s.`, undefined, {
+          throw new LlmError("timeout", `O Gemini não respondeu em ${timeoutMs / 1000} s.`, undefined, {
             cause: error,
           });
         }
         if (attempt >= maxRetries) {
-          throw new GeminiError("unavailable", "Falha de rede ao chamar o Gemini.", undefined, { cause: error });
+          throw new LlmError("unavailable", "Falha de rede ao chamar o Gemini.", undefined, { cause: error });
         }
         await wait(backoffMs(attempt), signal);
         continue;
@@ -195,9 +162,9 @@ export function createGeminiClient(config: GeminiClientConfig = {}) {
         try {
           return await response.json();
         } catch (error) {
-          if (signal?.aborted) throw new GeminiError("aborted", "Requisição cancelada.", undefined, { cause: error });
-          if (timeout.aborted) throw new GeminiError("timeout", "O Gemini demorou demais para responder.");
-          throw new GeminiError("invalid_response", "O Gemini devolveu um corpo que não é JSON.", undefined, {
+          if (signal?.aborted) throw new LlmError("aborted", "Requisição cancelada.", undefined, { cause: error });
+          if (timeout.aborted) throw new LlmError("timeout", "O Gemini demorou demais para responder.");
+          throw new LlmError("invalid_response", "O Gemini devolveu um corpo que não é JSON.", undefined, {
             cause: error,
           });
         }
@@ -215,7 +182,7 @@ export function createGeminiClient(config: GeminiClientConfig = {}) {
     try {
       await sleep(ms, signal);
     } catch (error) {
-      throw new GeminiError("aborted", "Requisição cancelada.", undefined, { cause: error });
+      throw new LlmError("aborted", "Requisição cancelada.", undefined, { cause: error });
     }
   }
 
@@ -239,11 +206,11 @@ export function createGeminiClient(config: GeminiClientConfig = {}) {
 
       const embeddings = result.embeddings ?? [];
       if (embeddings.length !== batch.length) {
-        throw new GeminiError("invalid_response", `Esperava ${batch.length} embeddings, recebi ${embeddings.length}.`);
+        throw new LlmError("invalid_response", `Esperava ${batch.length} embeddings, recebi ${embeddings.length}.`);
       }
       for (const embedding of embeddings) {
         if (embedding.values?.length !== GEMINI_EMBEDDING_DIMENSIONS) {
-          throw new GeminiError("invalid_response", `Embedding com ${embedding.values?.length ?? 0} dimensões.`);
+          throw new LlmError("invalid_response", `Embedding com ${embedding.values?.length ?? 0} dimensões.`);
         }
         vectors.push(normalize(embedding.values));
       }
@@ -270,19 +237,27 @@ export function createGeminiClient(config: GeminiClientConfig = {}) {
       options,
     )) as {
       promptFeedback?: { blockReason?: string };
+      usageMetadata?: { promptTokenCount?: number; candidatesTokenCount?: number; thoughtsTokenCount?: number };
       candidates?: Array<{ finishReason?: string; content?: { parts?: Array<{ text?: string; thought?: boolean }> } }>;
     };
 
+    const usage = result.usageMetadata;
+    if (usage) {
+      options.onUsage?.({
+        entrada: usage.promptTokenCount ?? 0,
+        saida: (usage.candidatesTokenCount ?? 0) + (usage.thoughtsTokenCount ?? 0),
+      });
+    }
     if (result.promptFeedback?.blockReason) {
-      throw new GeminiError("blocked", `Pedido bloqueado pelo Gemini (${result.promptFeedback.blockReason}).`);
+      throw new LlmError("blocked", `Pedido bloqueado pelo Gemini (${result.promptFeedback.blockReason}).`);
     }
     const candidate = result.candidates?.[0];
     const finishReason = candidate?.finishReason ?? "";
     if (BLOCKED_FINISH_REASONS.has(finishReason)) {
-      throw new GeminiError("blocked", `Resposta bloqueada pelo Gemini (${finishReason}).`);
+      throw new LlmError("blocked", `Resposta bloqueada pelo Gemini (${finishReason}).`);
     }
     if (finishReason === "MAX_TOKENS") {
-      throw new GeminiError("invalid_response", "A resposta do Gemini foi cortada por excesso de tamanho.");
+      throw new LlmError("invalid_response", "A resposta do Gemini foi cortada por excesso de tamanho.");
     }
 
     const text = (candidate?.content?.parts ?? [])
@@ -290,22 +265,18 @@ export function createGeminiClient(config: GeminiClientConfig = {}) {
       .map((part) => part.text ?? "")
       .join("")
       .trim();
-    if (!text) throw new GeminiError("invalid_response", "O Gemini devolveu uma resposta vazia.");
+    if (!text) throw new LlmError("invalid_response", "O Gemini devolveu uma resposta vazia.");
 
     try {
       return JSON.parse(text);
     } catch (error) {
-      throw new GeminiError("invalid_response", "A resposta do Gemini não é um JSON válido.", undefined, {
+      throw new LlmError("invalid_response", "A resposta do Gemini não é um JSON válido.", undefined, {
         cause: error,
       });
     }
   }
 
   return { embed, generateJson };
-}
-
-function backoffMs(attempt: number): number {
-  return 1000 * 2 ** attempt + Math.floor(Math.random() * 250);
 }
 
 export type GeminiClient = ReturnType<typeof createGeminiClient>;

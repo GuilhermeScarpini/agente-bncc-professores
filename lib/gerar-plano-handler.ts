@@ -3,7 +3,7 @@
 import "server-only";
 import type { z } from "zod";
 import { failure, success, validationFailure, type ActionResult } from "@/lib/action-result";
-import { GeminiError } from "@/lib/ai/gemini";
+import { LlmError } from "@/lib/ai/llm-error";
 import { BnccAgentError, bnccAgentService } from "@/lib/bncc/agent-service";
 import { PlanoSemAncoragemError } from "@/lib/bncc/prompt";
 import { ProvaSemQuestoesError } from "@/lib/bncc/prompt-prova";
@@ -16,8 +16,8 @@ export function json<T>(body: ActionResult<T>, status = 200, retryAfterMs?: numb
 }
 
 function logFailure(error: unknown): void {
-  if (error instanceof GeminiError) {
-    if (error.kind !== "aborted") console.warn(`[agente-bncc] Gemini (${error.kind}): ${error.message}`);
+  if (error instanceof LlmError) {
+    if (error.kind !== "aborted") console.warn(`[agente-bncc] IA (${error.kind}): ${error.message}`);
   } else if (error instanceof BnccAgentError || error instanceof PlanoSemAncoragemError || error instanceof ProvaSemQuestoesError) {
     if (!(error instanceof BnccAgentError && error.kind === "sem_resultados")) {
       console.warn(`[agente-bncc] ${error.message}`);
@@ -47,18 +47,20 @@ function errorResponse(error: unknown, oQue: string): Response {
   if (error instanceof ProvaSemQuestoesError) {
     return json(failure("A IA não devolveu questões válidas para essas habilidades. Tente gerar de novo."), 502);
   }
-  if (error instanceof GeminiError) {
+  if (error instanceof LlmError) {
     switch (error.kind) {
       case "rate_limit": {
         const wait = error.retryAfterMs ?? 60_000;
-        return json(failure(`O limite gratuito da IA foi atingido. Tente de novo em ${formatRetryAfter(wait)}.`), 429, wait);
+        return json(failure(`O limite de uso da IA foi atingido. Tente de novo em ${formatRetryAfter(wait)}.`), 429, wait);
       }
+      case "no_credit":
+        return json(failure("Os créditos da IA acabaram. Avise o administrador do agente BNCC."), 402);
       case "timeout":
         return json(failure("A IA demorou demais para responder. Tente novamente."), 504);
       case "blocked":
         return json(failure(`A IA não gerou ${oQue} por causa dos filtros de segurança. Reformule o pedido.`), 422);
       case "config":
-        return json(failure("O agente BNCC não está configurado: confira a GEMINI_API_KEY e o GEMINI_MODEL do agente."), 503);
+        return json(failure("A IA do agente BNCC não está configurada: confira a chave e o modelo (GEMINI_* ou DEEPSEEK_*)."), 503);
       case "aborted":
         return json(failure("Geração cancelada."), 499);
       case "unavailable":

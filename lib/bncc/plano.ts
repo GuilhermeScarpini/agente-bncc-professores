@@ -62,6 +62,8 @@ export interface PlanoAula {
 /** Resposta de POST /api/v1/planos: o plano e a versão pronta para copiar. */
 export interface PlanoGerado extends PlanoAula {
   texto: string;
+  /** A IA e o modelo que geraram (ex.: deepseek / deepseek-flash). */
+  ia: { provedor: string; modelo: string; tokens: { entrada: number; saida: number } };
 }
 
 export const AVISO_IA = "Plano gerado com apoio de IA a partir da BNCC. Revise antes de usar com a turma.";
