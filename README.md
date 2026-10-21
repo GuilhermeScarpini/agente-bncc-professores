@@ -11,7 +11,7 @@ O ponto central é a confiabilidade: a IA escreve o texto, mas os códigos e a d
 
 - **Planos de aula** a partir de até 5 habilidades, com objetivos, metodologia passo a passo e avaliação formativa.
 - **Provas com gabarito**: de 3 a 20 questões (mistas, só objetivas ou só discursivas), cada uma ligada a uma habilidade.
-- **Seleção por ano e bimestre**, juntando habilidades de períodos diferentes (para turmas que retomam conteúdos de anos anteriores).
+- **Seleção por ano e bimestre, do 1º ano do Fundamental à 3ª série do Ensino Médio**, juntando habilidades de períodos diferentes (para turmas que retomam conteúdos de anos anteriores).
 - **Edição da prova**: o professor muda título e ano, edita, exclui e adiciona questões. Numa questão escrita à mão, "Procurar código BNCC" acha a habilidade que combina com o texto.
 - **PDFs** do plano e da prova em duas versões: a dos alunos (só as questões, com imagens) e a do professor (gabarito, critérios e o código BNCC de cada questão).
 - **API v1** com chave para outros sistemas, e **escolha da IA** em cada pedido: Gemini ou DeepSeek.
@@ -48,7 +48,7 @@ O agente está publicado em <https://agente-bncc.vercel.app>. As páginas pedem 
 
 ## Em detalhes
 
-Na página de demonstração (`/`), o professor não precisa digitar o tema: escolhe a disciplina (as 8 da BNCC no 1º ao 5º ano), o ano e o bimestre nos menus, vê a lista de habilidades daquele período com o texto oficial e marca de 1 a 5 habilidades. Trocar o ano ou o bimestre não desmarca nada: dá para juntar habilidades de períodos diferentes (uma turma com defasagem retoma as de anos anteriores), e as marcadas ficam numa lista com o ano e o bimestre de cada uma. Se quiser, escreve um complemento (turma, tempo, recursos, adaptações). O plano sai preenchido a partir dessas habilidades, com componente curricular, ano e bimestre no cabeçalho: o ano só aparece quando todas são do mesmo ano, e o bimestre, quando todas são do mesmo bimestre.
+Na página de demonstração (`/`), o professor não precisa digitar o tema: escolhe a disciplina (as 9 do Ensino Fundamental, com Língua Inglesa a partir do 6º ano, e as 4 áreas do Ensino Médio, além de Língua Portuguesa), o ano (1º ao 9º ano, ou 1ª a 3ª série do Ensino Médio) e o bimestre nos menus, vê a lista de habilidades daquele período com o texto oficial e marca de 1 a 5 habilidades. Trocar o ano ou o bimestre não desmarca nada: dá para juntar habilidades de períodos diferentes (uma turma com defasagem retoma as de anos anteriores), e as marcadas ficam numa lista com o ano e o bimestre de cada uma. Se quiser, escreve um complemento (turma, tempo, recursos, adaptações). O plano sai preenchido a partir dessas habilidades, com componente curricular, ano e bimestre no cabeçalho: o ano só aparece quando todas são do mesmo ano, e o bimestre, quando todas são do mesmo bimestre.
 
 Pela API, também dá para mandar um tema livre e, se quiser, filtrar por disciplina e ano escolar. Nesse caso o agente:
 
@@ -122,7 +122,7 @@ curl -X POST http://localhost:3200/api/v1/planos \
 | `habilidades` | sim, sem `tema` | Lista de 1 a 5 códigos BNCC escolhidos (ex.: `["EF03MA07", "EF03MA08"]`): o plano usa todos, sem busca semântica |
 | `complemento` | não         | Orientações do professor: turma, tempo, recursos, adaptações (até 500 caracteres) |
 | `componente`  | não         | Disciplina, exatamente como em `GET /api/v1/catalogo`         |
-| `anoEscolar`  | não         | Valor de ano escolar de `GET /api/v1/catalogo` (ex.: `ef-6`, `em`) |
+| `anoEscolar`  | não         | Valor de ano escolar de `GET /api/v1/catalogo` (ex.: `ef-6`, `em-2` para a 2ª série, `em` para o Ensino Médio inteiro) |
 | `bimestre`    | não         | `1` a `4`; aparece no cabeçalho do plano e no pedido ao Gemini |
 
 Com `habilidades`, `componente` e `anoEscolar` (se vierem) precisam combinar com cada código.
@@ -183,7 +183,7 @@ Lista as disciplinas (agrupadas por etapa) e os anos escolares aceitos nos filtr
 
 ### `GET /api/v1/calendario`
 
-Os mesmos menus das páginas: `disciplinas` → `anos` → `bimestres` → `habilidades` (`codigo` e `descricao` oficial), com `disponivel` em cada disciplina e ano. Serve para o sistema cliente montar a escolha de habilidades e mandar os códigos em `habilidades`. É pública (dados abertos da BNCC), tem cerca de 200 KB e pode ficar em cache: só muda quando `prisma/data/bncc-bimestres.json` muda.
+Os mesmos menus das páginas: `disciplinas` → `anos` → `bimestres` → `habilidades` (`codigo` e `descricao` oficial), com `disponivel` em cada disciplina e ano. Serve para o sistema cliente montar a escolha de habilidades e mandar os códigos em `habilidades`. É pública (dados abertos da BNCC), tem cerca de 750 KB (uns 130 KB com compressão) e pode ficar em cache: só muda quando `prisma/data/bncc-bimestres.json` muda.
 
 ### `GET /api/v1/status`
 
@@ -201,7 +201,7 @@ No turma-social, uma prova `formato: "objetivas"` vira o rascunho da "Nova avali
 ## Dados e modelos
 
 - **Habilidades:** `prisma/data/bncc-habilidades.json` tem o código e a descrição literais de todas as habilidades da BNCC homologada (93 da Educação Infantil, 1.304 do Ensino Fundamental e 183 do Ensino Médio), extraídos do PDF oficial do MEC. Etapa, ano e componente são derivados do código.
-- **Bimestres:** a BNCC define as habilidades por ano, não por bimestre. A distribuição usada nos menus fica em `prisma/data/bncc-bimestres.json` (disciplina → ano → bimestre → códigos). O arquivo vem com uma **sugestão** para as 8 disciplinas do 1º ao 5º ano (Língua Inglesa só começa no 6º): Matemática foi distribuída à mão em progressão espiral; as demais, em 4 blocos seguidos na ordem dos códigos, com as habilidades de faixa (ex.: EF15AR, EF35LP) em todos os anos que cobrem. Edite-o para seguir o currículo da sua rede: um ano ou disciplina sem códigos aparece como "em breve", e códigos de outra disciplina ou de outro ano são recusados com uma mensagem que diz qual linha corrigir.
+- **Bimestres:** a BNCC define as habilidades por ano, não por bimestre. A distribuição usada nos menus fica em `prisma/data/bncc-bimestres.json` (disciplina → ano → bimestre → códigos) e cobre **todo o Ensino Fundamental (1º ao 9º ano) e as 3 séries do Ensino Médio**, com todas as habilidades do EF e do EM. É uma **sugestão**: Matemática do Fundamental foi distribuída à mão em progressão espiral; as demais disciplinas, em 4 blocos seguidos na ordem dos códigos, com as habilidades de faixa (ex.: EF15AR, EF35LP, EF69LP) em todos os anos que cobrem. Língua Inglesa começa no 6º ano. No Ensino Médio, a BNCC organiza as habilidades por área e não as separa por série (EM13 vale da 1ª à 3ª), então cada série traz a área inteira; no arquivo, as séries são os anos 10, 11 e 12. Edite-o para seguir o currículo da sua rede: cada disciplina mostra só os anos que têm chave nela, um ano com a chave mas sem códigos aparece como "em breve", e códigos de outra disciplina ou de outro ano são recusados com uma mensagem que diz qual linha corrigir.
 - **Outra fonte:** `npm run db:seed-bncc -- --arquivo habilidades.csv` aceita CSV (separado por `;`, `,` ou tab) ou JSON, com as colunas `id` (ou `codigo`) e `descricao`, e, opcionalmente, `unidade_tematica` e `objeto_conhecimento`. Use `-- --forcar` para recalcular todos os embeddings.
 - **Busca:** os embeddings (768 dimensões) ficam na tabela `bncc_habilidades` do SQLite. A comparação com o tema é feita em memória: são cerca de 1.600 vetores, o que leva poucos milissegundos e dá um resultado exato.
 - **Qual IA gera:** Gemini ou DeepSeek. `LLM_PROVIDER` (`gemini`, o padrão, ou `deepseek`) define a IA de sempre, e cada pedido pode escolher outra com `llm` e `modelo`. Nas páginas, o professor escolhe a IA antes de gerar: o DeepSeek vem marcado como recomendado, com o modelo à escolha (Flash, o recomendado, ou V4 Pro); o Gemini usa o modelo padrão (`GEMINI_MODEL`). Uma IA sem chave aparece desabilitada. O DeepSeek é pré-pago (`DEEPSEEK_API_KEY`, em https://platform.deepseek.com) e não tem cota diária como o plano gratuito do Gemini; os modelos são `deepseek-flash` (padrão, ~13 s para 5 questões) e `deepseek-v4-pro` (~37 s, explicações mais detalhadas). `DEEPSEEK_EFFORT` (`low`, o padrão, `high` ou `max`) controla quanto ele raciocina. O DeepSeek não aceita o "formato obrigatório" do Gemini: o JSON Schema vai nas instruções, e a resposta passa pela mesma conferência. A **busca por tema** usa os embeddings do Gemini (o DeepSeek não tem); pedidos com `habilidades` escolhidas não precisam dela.

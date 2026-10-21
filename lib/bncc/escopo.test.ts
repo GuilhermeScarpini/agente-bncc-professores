@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 import { gerarPlanoSchema } from "../validation";
-import { escopoDoPedido, type HabilidadeMarcada } from "./escopo";
+import { anoMaisAlto, escopoDoPedido, type HabilidadeMarcada } from "./escopo";
 
 const marcada = (codigo: string, anoEscolar: string, bimestre: HabilidadeMarcada["bimestre"]): HabilidadeMarcada => ({
   codigo,
@@ -37,5 +37,13 @@ describe("escopoDoPedido", () => {
     const marcadas = [marcada("EF03MA07", "ef-3", "2"), marcada("EF02MA05", "ef-2", "3")];
     const pedido = { componente: "Matemática", habilidades: marcadas.map((item) => item.codigo), ...escopoDoPedido(marcadas) };
     assert.equal(gerarPlanoSchema.safeParse(pedido).success, true);
+  });
+});
+
+describe("anoMaisAlto", () => {
+  it("escolhe o ano mais avançado, com o Ensino Médio depois do 9º ano", () => {
+    assert.equal(anoMaisAlto([marcada("EF09MA01", "ef-9", "1"), marcada("EF03MA07", "ef-3", "1")])?.anoEscolar, "ef-9");
+    assert.equal(anoMaisAlto([marcada("EF09LP01", "ef-9", "1"), marcada("EM13LP01", "em-1", "1")])?.anoEscolar, "em-1");
+    assert.equal(anoMaisAlto([]), null);
   });
 });

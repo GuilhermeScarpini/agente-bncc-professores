@@ -3,7 +3,7 @@
 // escola, por isso fica num arquivo editável e é conferido aqui contra os códigos oficiais.
 // Sem dependências de servidor: o formulário usa os mesmos rótulos.
 import { z } from "zod";
-import { findAnoEscolar, parseCodigoBncc } from "./codigos";
+import { anoEscolarDoNumero, parseCodigoBncc } from "./codigos";
 
 export const BIMESTRES = ["1", "2", "3", "4"] as const;
 export type Bimestre = (typeof BIMESTRES)[number];
@@ -20,7 +20,7 @@ export interface BimestreCalendario {
 
 export interface AnoCalendario {
   ano: number;
-  /** Valor de ANOS_ESCOLARES (ex.: "ef-3"). */
+  /** Valor de ANOS_ESCOLARES (ex.: "ef-3", "em-1"). */
   anoEscolar: string;
   label: string;
   /** Falso quando nenhum bimestre tem códigos: aparece como "em breve". */
@@ -39,7 +39,8 @@ export interface CalendarioBimestral {
 }
 
 const arquivoSchema = z.object({
-  anos: z.array(z.number().int().min(1).max(9)).min(1),
+  // 1 a 9 = 1º ao 9º ano; 10 a 12 = 1ª a 3ª série do Ensino Médio.
+  anos: z.array(z.number().int().min(1).max(12)).min(1),
   disciplinas: z
     .array(
       z.object({
@@ -63,8 +64,11 @@ export function parseCalendario(dados: unknown): CalendarioBimestral {
       if (!parsed.data.anos.includes(Number(chave))) problemas.push(`${nome}: ano "${chave}" não está na lista "anos".`);
     }
 
-    const anos = parsed.data.anos.map((ano): AnoCalendario => {
-      const opcao = findAnoEscolar(`ef-${ano}`)!;
+    // Cada disciplina mostra só os anos que têm chave nela (Língua Inglesa começa no 6º ano; as áreas
+    // do Ensino Médio só têm as séries), na ordem da lista "anos".
+    const doArquivo = parsed.data.anos.filter((ano) => Object.hasOwn(porAno, String(ano)));
+    const anos = doArquivo.map((ano): AnoCalendario => {
+      const opcao = anoEscolarDoNumero(ano)!;
       const porBimestre = porAno[String(ano)] ?? {};
       for (const chave of Object.keys(porBimestre)) {
         if (!BIMESTRES.includes(chave as Bimestre)) problemas.push(`${nome}, ${opcao.label}: bimestre "${chave}" inválido.`);

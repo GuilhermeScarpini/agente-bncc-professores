@@ -82,12 +82,24 @@ export const ANOS_ESCOLARES: readonly AnoEscolarOpcao[] = [
     fim: index + 1,
   })),
   { value: "em", label: "Ensino Médio", inicio: 10, fim: 12 },
+  // A BNCC não separa o Ensino Médio por série (EM13 vale da 1ª à 3ª), mas os menus e o cabeçalho sim.
+  ...Array.from({ length: 3 }, (_, index) => ({
+    value: `em-${index + 1}`,
+    label: `${index + 1}ª série do Ensino Médio`,
+    inicio: 10 + index,
+    fim: 10 + index,
+  })),
 ];
 
 export const ANOS_ESCOLARES_VALORES = ANOS_ESCOLARES.map((opcao) => opcao.value) as [string, ...string[]];
 
 export function findAnoEscolar(value: string | undefined): AnoEscolarOpcao | undefined {
   return ANOS_ESCOLARES.find((opcao) => opcao.value === value);
+}
+
+/** A opção de um ano só, na escala do banco: 1 a 9 = 1º ao 9º ano; 10 a 12 = 1ª a 3ª série do Ensino Médio. */
+export function anoEscolarDoNumero(ano: number): AnoEscolarOpcao | undefined {
+  return ANOS_ESCOLARES.find((opcao) => opcao.inicio === ano && opcao.fim === ano);
 }
 
 export interface CodigoBncc {

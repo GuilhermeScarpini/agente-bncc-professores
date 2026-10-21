@@ -3,6 +3,7 @@
 // cabeçalho só leva o ano ou o bimestre quando todas vêm do mesmo lugar.
 // Sem dependências de servidor: usado pelo formulário (navegador) e pelos testes.
 import type { Bimestre } from "./bimestres";
+import { findAnoEscolar } from "./codigos";
 
 /** Habilidade marcada na lista, com o ano e o bimestre de onde veio. */
 export interface HabilidadeMarcada {
@@ -24,7 +25,8 @@ export interface EscopoDoPedido {
 export function anoMaisAlto(
   marcadas: ReadonlyArray<Pick<HabilidadeMarcada, "anoEscolar" | "anoLabel">>,
 ): Pick<HabilidadeMarcada, "anoEscolar" | "anoLabel"> | null {
-  const numero = (item: Pick<HabilidadeMarcada, "anoEscolar">) => Number(/(\d+)$/.exec(item.anoEscolar)?.[1] ?? 0);
+  // Pela escala do banco: "em-1" (10) vem depois de "ef-9".
+  const numero = (item: Pick<HabilidadeMarcada, "anoEscolar">) => findAnoEscolar(item.anoEscolar)?.fim ?? 0;
   const maior = marcadas.reduce<(typeof marcadas)[number] | null>(
     (atual, item) => (!atual || numero(item) > numero(atual) ? item : atual),
     null,

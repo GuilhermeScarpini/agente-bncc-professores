@@ -54,6 +54,11 @@ describe("filtros do planejador", () => {
     const em = findAnoEscolar("em")!;
     const em13 = parseCodigoBncc("EM13MAT101")!;
     assert.ok(em13.anoInicio <= em.fim && em13.anoFim >= em.inicio);
+    for (const serie of ["em-1", "em-2", "em-3"]) {
+      const opcao = findAnoEscolar(serie)!;
+      assert.ok(em13.anoInicio <= opcao.fim && em13.anoFim >= opcao.inicio, serie);
+    }
+    assert.equal(findAnoEscolar("em-3")?.label, "3ª série do Ensino Médio");
   });
 
   it("não repete opções", () => {
